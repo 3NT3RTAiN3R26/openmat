@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use num_complex::Complex64;
 
-use crate::ast::{BinOp, Expr, LValue, Stmt, UnOp};
+use crate::ast::{BinOp, Expr, LValue, Stmt, StmtKind, UnOp};
 use crate::error::{MatError, MatResult};
 use crate::parser::parse;
 use crate::session::{Session, UserFunc};
@@ -24,12 +24,12 @@ impl Session {
 
     fn eval_program(&mut self, program: &[Stmt]) -> MatResult<()> {
         for stmt in program {
-            if let Stmt::Function {
+            if let StmtKind::Function {
                 name,
                 outputs,
                 params,
                 body,
-            } = stmt
+            } = &stmt.kind
             {
                 self.funcs.insert(
                     name.clone(),
@@ -42,7 +42,7 @@ impl Session {
             }
         }
         for stmt in program {
-            if !matches!(stmt, Stmt::Function { .. }) {
+            if !matches!(stmt.kind, StmtKind::Function { .. }) {
                 let flow = self.exec(stmt)?;
                 if flow == Flow::Return {
                     break;
@@ -52,9 +52,18 @@ impl Session {
         Ok(())
     }
 
+    fn checkpoint(&mut self, line: usize) -> MatResult<()> {
+        let Some(debug) = self.debug.clone() else {
+            return Ok(());
+        };
+        debug.wait(self, line)
+    }
+
     fn exec(&mut self, stmt: &Stmt) -> MatResult<Flow> {
-        match stmt {
-            Stmt::Expr { expr, suppress } => {
+        let line = stmt.line;
+        self.checkpoint(line)?;
+        match &stmt.kind {
+            StmtKind::Expr { expr, suppress } => {
                 let value = self.eval(expr)?;
                 self.insert("ans".into(), value.clone());
                 if !suppress {
@@ -62,7 +71,7 @@ impl Session {
                 }
                 Ok(Flow::Next)
             }
-            Stmt::Assign {
+            StmtKind::Assign {
                 targets,
                 expr,
                 suppress,
@@ -107,7 +116,7 @@ impl Session {
                 }
                 Ok(Flow::Next)
             }
-            Stmt::If {
+            StmtKind::If {
                 cond,
                 then_body,
                 elseifs,
@@ -123,11 +132,14 @@ impl Session {
                 }
                 self.exec_block(else_body)
             }
-            Stmt::For { var, expr, body } => {
+            StmtKind::For { var, expr, body } => {
                 let iter = self.eval(expr)?.into_matrix()?;
                 for c in 0..iter.cols.max(if iter.numel() == 0 { 0 } else { iter.cols }) {
                     if iter.cols == 0 {
                         break;
+                    }
+                    if c > 0 {
+                        self.checkpoint(line)?;
                     }
                     self.insert(var.clone(), Value::Matrix(iter.column(c)));
                     match self.exec_block(body)? {
@@ -138,9 +150,16 @@ impl Session {
                 }
                 Ok(Flow::Next)
             }
-            Stmt::While { cond, body } => {
+            StmtKind::While { cond, body } => {
                 let mut guard = 0usize;
-                while self.eval(cond)?.is_true()? {
+                let mut first = true;
+                while {
+                    if !first {
+                        self.checkpoint(line)?;
+                    }
+                    first = false;
+                    self.eval(cond)?.is_true()?
+                } {
                     guard += 1;
                     if guard > 1_000_000 {
                         return Err(MatError::new("while loop exceeded 1000000 iterations"));
@@ -153,7 +172,7 @@ impl Session {
                 }
                 Ok(Flow::Next)
             }
-            Stmt::Switch {
+            StmtKind::Switch {
                 expr,
                 cases,
                 otherwise,
@@ -167,10 +186,10 @@ impl Session {
                 }
                 self.exec_block(otherwise)
             }
-            Stmt::Break => Ok(Flow::Break),
-            Stmt::Continue => Ok(Flow::Continue),
-            Stmt::Return => Ok(Flow::Return),
-            Stmt::Function { .. } => Ok(Flow::Next),
+            StmtKind::Break => Ok(Flow::Break),
+            StmtKind::Continue => Ok(Flow::Continue),
+            StmtKind::Return => Ok(Flow::Return),
+            StmtKind::Function { .. } => Ok(Flow::Next),
         }
     }
 

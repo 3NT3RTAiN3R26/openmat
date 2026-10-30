@@ -15,3 +15,5 @@ openmat-lib = { path = "../openmat-lib" }
 eframe = "=0.29.1"
 egui = "=0.29.1"
 egui_plot = "=0.29.0"
+rfd = "0.15"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

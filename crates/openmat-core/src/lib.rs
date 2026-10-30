@@ -1,4 +1,5 @@
 mod ast;
+mod debug;
 mod error;
 mod interp;
 mod lexer;
@@ -7,7 +8,8 @@ mod plot;
 mod session;
 mod value;
 
-pub use ast::{BinOp, Expr, LValue, Stmt, UnOp};
+pub use ast::{BinOp, Expr, LValue, Stmt, StmtKind, UnOp};
+pub use debug::{DebugCtl, DebugView};
 pub use error::{MatError, MatResult};
 pub use parser::parse;
 pub use plot::{Axes, Figure, Series, SeriesKind};

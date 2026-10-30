@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, Expr, LValue, Stmt, UnOp};
+use crate::ast::{BinOp, Expr, LValue, Stmt, StmtKind, UnOp};
 use crate::error::{MatError, MatResult};
 use crate::lexer::{lex, Token, TokenKind};
 
@@ -49,54 +49,57 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> MatResult<Stmt> {
-        if self.eat_kw("function") {
-            return self.parse_function();
-        }
-        if self.eat_kw("if") {
-            return self.parse_if();
-        }
-        if self.eat_kw("for") {
-            return self.parse_for();
-        }
-        if self.eat_kw("while") {
-            return self.parse_while();
-        }
-        if self.eat_kw("switch") {
-            return self.parse_switch();
-        }
-        if self.eat_kw("break") {
-            return Ok(Stmt::Break);
-        }
-        if self.eat_kw("continue") {
-            return Ok(Stmt::Continue);
-        }
-        if self.eat_kw("return") {
-            return Ok(Stmt::Return);
-        }
-        if self.is_kw("global") || self.is_kw("persistent") {
+        let line = self.current().line;
+        let kind = if self.eat_kw("function") {
+            self.parse_function()?
+        } else if self.eat_kw("if") {
+            self.parse_if()?
+        } else if self.eat_kw("for") {
+            self.parse_for()?
+        } else if self.eat_kw("while") {
+            self.parse_while()?
+        } else if self.eat_kw("switch") {
+            self.parse_switch()?
+        } else if self.eat_kw("break") {
+            StmtKind::Break
+        } else if self.eat_kw("continue") {
+            StmtKind::Continue
+        } else if self.eat_kw("return") {
+            StmtKind::Return
+        } else if self.is_kw("global") || self.is_kw("persistent") {
             return Err(self.err("global and persistent are not supported"));
-        }
-        let save = self.pos;
-        if let Some(targets) = self.try_lvalues() {
-            if self.is(&TokenKind::Assign) {
-                self.bump();
+        } else {
+            let save = self.pos;
+            if let Some(targets) = self.try_lvalues() {
+                if self.is(&TokenKind::Assign) {
+                    self.bump();
+                    let expr = self.parse_expr(0)?;
+                    StmtKind::Assign {
+                        targets,
+                        expr,
+                        suppress: false,
+                    }
+                } else {
+                    self.pos = save;
+                    let expr = self.parse_expr(0)?;
+                    StmtKind::Expr {
+                        expr,
+                        suppress: false,
+                    }
+                }
+            } else {
+                self.pos = save;
                 let expr = self.parse_expr(0)?;
-                return Ok(Stmt::Assign {
-                    targets,
+                StmtKind::Expr {
                     expr,
                     suppress: false,
-                });
+                }
             }
-        }
-        self.pos = save;
-        let expr = self.parse_expr(0)?;
-        Ok(Stmt::Expr {
-            expr,
-            suppress: false,
-        })
+        };
+        Ok(Stmt::new(line, kind))
     }
 
-    fn parse_if(&mut self) -> MatResult<Stmt> {
+    fn parse_if(&mut self) -> MatResult<StmtKind> {
         let cond = self.parse_expr(0)?;
         self.skip_separators();
         let then_body = self.parse_block()?;
@@ -114,7 +117,7 @@ impl Parser {
             Vec::new()
         };
         self.expect_kw("end")?;
-        Ok(Stmt::If {
+        Ok(StmtKind::If {
             cond,
             then_body,
             elseifs,
@@ -122,25 +125,25 @@ impl Parser {
         })
     }
 
-    fn parse_for(&mut self) -> MatResult<Stmt> {
+    fn parse_for(&mut self) -> MatResult<StmtKind> {
         let var = self.expect_ident()?;
         self.expect(&TokenKind::Assign)?;
         let expr = self.parse_expr(0)?;
         self.skip_separators();
         let body = self.parse_block()?;
         self.expect_kw("end")?;
-        Ok(Stmt::For { var, expr, body })
+        Ok(StmtKind::For { var, expr, body })
     }
 
-    fn parse_while(&mut self) -> MatResult<Stmt> {
+    fn parse_while(&mut self) -> MatResult<StmtKind> {
         let cond = self.parse_expr(0)?;
         self.skip_separators();
         let body = self.parse_block()?;
         self.expect_kw("end")?;
-        Ok(Stmt::While { cond, body })
+        Ok(StmtKind::While { cond, body })
     }
 
-    fn parse_switch(&mut self) -> MatResult<Stmt> {
+    fn parse_switch(&mut self) -> MatResult<StmtKind> {
         let expr = self.parse_expr(0)?;
         self.skip_separators();
         let mut cases = Vec::new();
@@ -157,14 +160,14 @@ impl Parser {
             Vec::new()
         };
         self.expect_kw("end")?;
-        Ok(Stmt::Switch {
+        Ok(StmtKind::Switch {
             expr,
             cases,
             otherwise,
         })
     }
 
-    fn parse_function(&mut self) -> MatResult<Stmt> {
+    fn parse_function(&mut self) -> MatResult<StmtKind> {
         let (outputs, name, params) = if self.is(&TokenKind::LBracket) {
             let outputs = self.parse_name_list()?;
             self.expect(&TokenKind::Assign)?;
@@ -186,7 +189,7 @@ impl Parser {
         self.skip_separators();
         let body = self.parse_block()?;
         self.expect_kw("end")?;
-        Ok(Stmt::Function {
+        Ok(StmtKind::Function {
             name,
             outputs,
             params,
@@ -657,8 +660,8 @@ mod tests {
 
     fn matrix_rows(src: &str) -> Vec<Vec<Expr>> {
         let stmts = parse(src).unwrap();
-        match &stmts[0] {
-            Stmt::Expr { expr: Expr::Matrix { rows }, .. } => rows.clone(),
+        match &stmts[0].kind {
+            StmtKind::Expr { expr: Expr::Matrix { rows }, .. } => rows.clone(),
             other => panic!("not a matrix: {other:?}"),
         }
     }

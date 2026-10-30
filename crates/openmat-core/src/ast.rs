@@ -90,7 +90,13 @@ pub enum LValue {
 }
 
 #[derive(Debug, Clone)]
-pub enum Stmt {
+pub struct Stmt {
+    pub line: usize,
+    pub kind: StmtKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum StmtKind {
     Expr {
         expr: Expr,
         suppress: bool,
@@ -132,9 +138,13 @@ pub enum Stmt {
 }
 
 impl Stmt {
+    pub fn new(line: usize, kind: StmtKind) -> Self {
+        Self { line, kind }
+    }
+
     pub fn set_suppress(&mut self, suppress: bool) {
-        match self {
-            Stmt::Expr { suppress: flag, .. } | Stmt::Assign { suppress: flag, .. } => {
+        match &mut self.kind {
+            StmtKind::Expr { suppress: flag, .. } | StmtKind::Assign { suppress: flag, .. } => {
                 *flag = suppress;
             }
             _ => {}

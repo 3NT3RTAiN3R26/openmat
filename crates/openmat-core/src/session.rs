@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use crate::ast::Stmt;
+use crate::debug::DebugCtl;
 use crate::error::{MatError, MatResult};
 use crate::plot::Figure;
 use crate::value::{Matrix, Value};
@@ -32,6 +34,7 @@ pub struct Session {
     index_cols: usize,
     index_dim: usize,
     index_count: usize,
+    pub debug: Option<Arc<DebugCtl>>,
 }
 
 impl Session {
@@ -53,6 +56,7 @@ impl Session {
             index_cols: 0,
             index_dim: 0,
             index_count: 0,
+            debug: None,
         };
         session.install_constants();
         session
