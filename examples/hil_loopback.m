@@ -1,3 +1,6 @@
+clear;
+home;
+
 h = hil.open('loopback');
 hil.regwrite(h, 0, 42);
 v = hil.regread(h, 0);

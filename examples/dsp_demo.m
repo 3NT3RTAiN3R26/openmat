@@ -1,3 +1,6 @@
+clear;
+home;
+
 x = [1 0 0 0];
 X = fft(x);
 y = ifft(X);

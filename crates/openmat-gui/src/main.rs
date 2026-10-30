@@ -596,20 +596,34 @@ fn format_modified(time: SystemTime) -> String {
 
 fn value_column(value: &Value) -> String {
     match value {
-        Value::Matrix(matrix) if matrix.numel() == 1 => cell_text(matrix, 0, 0),
-        Value::Matrix(matrix) if matrix.rows == 1 && (1..=6).contains(&matrix.cols) => {
-            let parts: Vec<_> = (0..matrix.cols).map(|col| cell_text(matrix, 0, col)).collect();
-            format!("[{}]", parts.join(" "))
-        }
-        Value::Matrix(matrix) if matrix.cols == 1 && (2..=6).contains(&matrix.rows) => {
-            let parts: Vec<_> = (0..matrix.rows).map(|row| cell_text(matrix, row, 0)).collect();
-            format!("[{}]", parts.join("; "))
-        }
+        Value::Matrix(matrix) => matrix_preview(matrix),
         Value::Char(text) if text.chars().count() <= 24 => format!("'{text}'"),
         Value::Func(FuncHandle::Named(name)) => format!("@{name}"),
         Value::Func(FuncHandle::Anon { params, .. }) => format!("@({})", params.join(", ")),
         _ => String::new(),
     }
+}
+
+/// MATLAB workspace preview: elements separated by `,`, rows by `;`.
+fn matrix_preview(matrix: &Matrix) -> String {
+    if matrix.numel() == 0 {
+        return String::new();
+    }
+    if matrix.numel() == 1 {
+        return cell_text(matrix, 0, 0);
+    }
+    if matrix.rows > 6 || matrix.cols > 6 {
+        return String::new();
+    }
+    let rows: Vec<String> = (0..matrix.rows)
+        .map(|row| {
+            (0..matrix.cols)
+                .map(|col| cell_text(matrix, row, col))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .collect();
+    format!("[{}]", rows.join(";"))
 }
 
 fn size_text(value: &Value) -> String {

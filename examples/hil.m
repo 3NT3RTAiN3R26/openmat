@@ -1,3 +1,6 @@
+clear;
+home;
+
 % Talks to openmat-agent on the PYNQ RFSoC at UDP port 5000.
 % Start the agent on the board first:
 %   ./openmat-agent --proto udp --bind 0.0.0.0:5000

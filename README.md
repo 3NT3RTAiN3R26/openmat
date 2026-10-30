@@ -34,7 +34,7 @@ Der Editor zeigt Zeilennummern. Ein Klick auf eine Nummer setzt oder entfernt ei
 
 **Run** führt das Skript aus und hält an Breakpoints an. **Step** startet an der ersten Anweisung und geht danach eine Anweisung weiter, auch in Schleifen und Funktionen. Die aktuelle Zeile ist markiert, der Workspace zeigt die Variablen bis dahin. **Stop** bricht ab und behält die schon gesetzten Variablen. Während einer Sitzung ist der Editor gesperrt.
 
-**Workspace** zeigt nach dem Lauf Name, Value, Size und Class. Skalare und kurze Vektoren stehen in der Value-Spalte. Ein Doppelklick öffnet die Variable als Tabelle, auch für `fi`, Cells und Structs. Konstanten wie `pi` und `i` werden nicht gelistet.
+**Workspace** zeigt nach dem Lauf Name, Value, Size und Class. Skalare stehen als Zahl. Kleine Matrizen stehen in der Value-Spalte wie ein MATLAB-Literal: Elemente mit `,`, Zeilen mit `;`, zum Beispiel `[2,4,8]` und `[2,4,8;4,8,16;6,12,24]`. Größere Matrizen bleiben leer, bis man sie per Doppelklick öffnet. Ein Doppelklick öffnet die Variable als Tabelle, auch für `fi`, Cells und Structs. Konstanten wie `pi` und `i` werden nicht gelistet.
 
 Plots aus `plot`, `stem`, `step` und `bode` erscheinen unter der Konsole.
 
