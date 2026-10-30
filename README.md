@@ -93,9 +93,12 @@ Der Loopback-Transport und die Protokolltests laufen ohne Board: `cargo run -p o
 
 ## Beispiele
 
+Jedes Skript beginnt mit `clear` und `home`.
+
 - `examples/linalg.m`
 - `examples/plot_sine.m`
 - `examples/dsp_demo.m`
 - `examples/fixed_point.m`
+- `examples/matrix_demo.m` zeigt `clear`, `home` und `a .* b` für eine Zeile und eine Spalte
 - `examples/hil_loopback.m`
 - `examples/hil.m`
