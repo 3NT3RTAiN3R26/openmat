@@ -91,6 +91,7 @@ struct OpenmatApp {
     debug_line: Option<usize>,
     debug_run: Option<DebugRun>,
     console_base: String,
+    new_figure: bool,
 }
 
 impl OpenmatApp {
@@ -111,6 +112,7 @@ impl OpenmatApp {
             debug_line: None,
             debug_run: None,
             console_base: String::new(),
+            new_figure: false,
         };
         if let Some(arg) = std::env::args().nth(1) {
             app.load_path(PathBuf::from(arg));
@@ -174,6 +176,10 @@ impl eframe::App for OpenmatApp {
                     self.console.clear();
                     self.status.clear();
                 }
+                ui.separator();
+                ui.label("Options");
+                ui.radio_value(&mut self.new_figure, false, "Reuse Figure");
+                ui.radio_value(&mut self.new_figure, true, "New Figure");
             });
             ui.label("MATLAB ist eine Marke von MathWorks. openmat ist nicht mit MathWorks verbunden.");
         });
@@ -245,11 +251,9 @@ impl eframe::App for OpenmatApp {
                             .font(egui::TextStyle::Monospace),
                     );
                 });
-            ui.separator();
-            ui.label("Plot");
-            self.draw_plots(ui);
         });
 
+        self.show_figure_windows(ctx);
         self.show_variable_window(ctx);
     }
 }
@@ -1082,6 +1086,7 @@ impl OpenmatApp {
         let ctl = DebugCtl::new(self.breakpoints.clone(), step);
         let mut session = std::mem::replace(&mut self.session, openmat_lib::session());
         session.output.clear();
+        session.new_figure_on_plot = self.new_figure;
         session.debug = Some(std::sync::Arc::clone(&ctl));
         let code = self.code.clone();
         let (tx, done_rx) = mpsc::channel();
@@ -1143,44 +1148,51 @@ impl OpenmatApp {
         ctx.request_repaint_after(Duration::from_millis(30));
     }
 
-    fn draw_plots(&self, ui: &mut egui::Ui) {
-        let Some(figure) = self.session.figures.get(self.session.current_figure) else {
-            ui.label("No figure yet.");
-            return;
-        };
-        let mut any = false;
-        for (index, axes) in figure.axes.iter().enumerate() {
-            if axes.series.is_empty() {
+    fn show_figure_windows(&self, ctx: &egui::Context) {
+        for (fig_index, figure) in self.session.figures.iter().enumerate() {
+            if figure.axes.iter().all(|axes| axes.series.is_empty()) {
                 continue;
             }
-            any = true;
-            let title = if axes.title.is_empty() {
-                format!("axes {}", index + 1)
+            let current = if fig_index == self.session.current_figure {
+                "  (current)"
             } else {
-                axes.title.clone()
+                ""
             };
-            ui.label(format!(
-                "{title}    {}    {}",
-                axes.xlabel, axes.ylabel
-            ));
-            Plot::new(format!("plot-{index}")).height(220.0).show(ui, |plot_ui| {
-                for series in &axes.series {
-                    let points: PlotPoints = series
-                        .xs
-                        .iter()
-                        .zip(series.ys.iter())
-                        .map(|(x, y)| [*x, *y])
-                        .collect();
-                    plot_ui.line(Line::new(points).name(if series.label.is_empty() {
-                        "series"
-                    } else {
-                        series.label.as_str()
-                    }));
-                }
-            });
-        }
-        if !any {
-            ui.label("Run a script with plot, stem, step, or bode.");
+            egui::Window::new(format!("Figure {}{current}", fig_index + 1))
+                .id(egui::Id::new(("figure-window", fig_index)))
+                .resizable(true)
+                .default_size([480.0, 320.0])
+                .default_pos(egui::pos2(48.0 + fig_index as f32 * 32.0, 72.0 + fig_index as f32 * 32.0))
+                .show(ctx, |ui| {
+                    for (index, axes) in figure.axes.iter().enumerate() {
+                        if axes.series.is_empty() {
+                            continue;
+                        }
+                        let title = if axes.title.is_empty() {
+                            format!("axes {}", index + 1)
+                        } else {
+                            axes.title.clone()
+                        };
+                        ui.label(format!("{title}    {}    {}", axes.xlabel, axes.ylabel));
+                        Plot::new(format!("fig-{fig_index}-axes-{index}"))
+                            .height(220.0)
+                            .show(ui, |plot_ui| {
+                                for series in &axes.series {
+                                    let points: PlotPoints = series
+                                        .xs
+                                        .iter()
+                                        .zip(series.ys.iter())
+                                        .map(|(x, y)| [*x, *y])
+                                        .collect();
+                                    plot_ui.line(Line::new(points).name(if series.label.is_empty() {
+                                        "series"
+                                    } else {
+                                        series.label.as_str()
+                                    }));
+                                }
+                            });
+                    }
+                });
         }
     }
 }

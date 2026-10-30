@@ -54,6 +54,7 @@ fn step(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         ys.push(output(&c, &d, &state, 1.0));
         state = rk4(&a, &b, &state, 1.0, dt);
     }
+    crate::plotb::prepare_plot_target(session);
     push_series(session, ts.clone(), ys.clone(), SeriesKind::Line);
     if session.nargout >= 2 {
         Ok(Value::Multi(vec![col(ts), col(ys)]))
@@ -78,6 +79,7 @@ fn bode(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         mag.push(20.0 * h.norm().max(1e-30).log10());
         phase.push(h.arg().to_degrees());
     }
+    crate::plotb::prepare_plot_target(session);
     push_series(session, ws.clone(), mag.clone(), SeriesKind::Line);
     let axes = session.current_figure_mut().axes_mut();
     axes.series.push(Series {

@@ -26,7 +26,25 @@ fn stem(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     add_series(session, args, SeriesKind::Stem)
 }
 
+pub(crate) fn prepare_plot_target(session: &mut Session) {
+    if !session.new_figure_on_plot {
+        return;
+    }
+    let index = session.current_figure.min(session.figures.len().saturating_sub(1));
+    let Some(figure) = session.figures.get(index) else {
+        return;
+    };
+    let active = figure.active.min(figure.axes.len().saturating_sub(1));
+    let held = figure.axes.get(active).is_some_and(|axes| axes.hold);
+    let busy = figure.axes.iter().any(|axes| !axes.series.is_empty());
+    if busy && !held {
+        session.figures.push(openmat_core::Figure::new());
+        session.current_figure = session.figures.len() - 1;
+    }
+}
+
 fn add_series(session: &mut Session, args: &[Value], kind: SeriesKind) -> MatResult<Value> {
+    prepare_plot_target(session);
     need(args, 1)?;
     let (xs, ys) = if args.len() == 1 || matches!(args.get(1), Some(Value::Char(_))) {
         let ys = real_vec(&args[0])?;

@@ -50,6 +50,20 @@ mod tests {
     }
 
     #[test]
+    fn new_figure_option_opens_a_window_per_plot() {
+        let mut session = session();
+        session.new_figure_on_plot = true;
+        session.eval_source("plot([1 2]); plot([3 4]);").unwrap();
+        assert_eq!(session.figures.len(), 2);
+        assert_eq!(session.figures[0].axes[0].series.len(), 1);
+        assert_eq!(session.figures[1].axes[0].series.len(), 1);
+
+        let session = exec("figure(1); plot([1 2]); figure(2); plot([3 4]);").unwrap();
+        assert_eq!(session.figures.len(), 2);
+        assert_eq!(session.current_figure, 1);
+    }
+
+    #[test]
     fn clf_clears_the_current_figure() {
         let session = exec("plot([1 2], [3 4]); title('sine'); clf;").unwrap();
         let axes = &session.figures[0].axes[0];

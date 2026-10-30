@@ -26,6 +26,9 @@ pub struct Session {
     pub output: String,
     /// Set by `home`. The GUI replaces the console instead of appending.
     pub output_homed: bool,
+    /// When set, `plot`, `stem`, `step`, and `bode` open a new figure if the
+    /// current one already has curves and `hold` is off.
+    pub new_figure_on_plot: bool,
     pub nargout: usize,
     pub rng: u64,
     pub ldiv_hook: Option<MatBin>,
@@ -49,6 +52,7 @@ impl Session {
             current_figure: 0,
             output: String::new(),
             output_homed: false,
+            new_figure_on_plot: false,
             nargout: 1,
             rng: 0x1234_5678_9abc_def0,
             ldiv_hook: None,
