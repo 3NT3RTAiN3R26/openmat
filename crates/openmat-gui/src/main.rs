@@ -5,7 +5,6 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
 use eframe::egui;
-use egui_plot::{Line, Plot, PlotPoints};
 use openmat_lib::{
     format_number, format_source, lint_source, DebugCtl, Diagnostic, FuncHandle, Matrix, Session,
     Severity, Value,
@@ -1148,51 +1147,89 @@ impl OpenmatApp {
         ctx.request_repaint_after(Duration::from_millis(30));
     }
 
-    fn show_figure_windows(&self, ctx: &egui::Context) {
-        for (fig_index, figure) in self.session.figures.iter().enumerate() {
-            if figure.axes.iter().all(|axes| axes.series.is_empty()) {
-                continue;
-            }
-            let current = if fig_index == self.session.current_figure {
-                "  (current)"
-            } else {
-                ""
-            };
-            egui::Window::new(format!("Figure {}{current}", fig_index + 1))
-                .id(egui::Id::new(("figure-window", fig_index)))
-                .resizable(true)
-                .default_size([480.0, 320.0])
-                .default_pos(egui::pos2(48.0 + fig_index as f32 * 32.0, 72.0 + fig_index as f32 * 32.0))
-                .show(ctx, |ui| {
-                    for (index, axes) in figure.axes.iter().enumerate() {
-                        if axes.series.is_empty() {
-                            continue;
-                        }
-                        let title = if axes.title.is_empty() {
-                            format!("axes {}", index + 1)
-                        } else {
-                            axes.title.clone()
-                        };
-                        ui.label(format!("{title}    {}    {}", axes.xlabel, axes.ylabel));
-                        Plot::new(format!("fig-{fig_index}-axes-{index}"))
-                            .height(220.0)
-                            .show(ui, |plot_ui| {
-                                for series in &axes.series {
-                                    let points: PlotPoints = series
-                                        .xs
-                                        .iter()
-                                        .zip(series.ys.iter())
-                                        .map(|(x, y)| [*x, *y])
-                                        .collect();
-                                    plot_ui.line(Line::new(points).name(if series.label.is_empty() {
-                                        "series"
-                                    } else {
-                                        series.label.as_str()
-                                    }));
-                                }
-                            });
+    fn show_figure_windows(&mut self, ctx: &egui::Context) {
+        let open_figures: Vec<(usize, openmat_lib::Figure)> = self
+            .session
+            .figures
+            .iter()
+            .enumerate()
+            .filter(|(_, figure)| figure.axes.iter().any(|axes| !axes.series.is_empty()))
+            .map(|(index, figure)| (index, figure.clone()))
+            .collect();
+        let mut closed = Vec::new();
+        for (fig_index, figure) in open_figures {
+            let mut close_requested = false;
+            let title = format!("Figure {}", fig_index + 1);
+            ctx.show_viewport_immediate(
+                egui::ViewportId::from_hash_of(("openmat-figure", fig_index)),
+                egui::ViewportBuilder::default()
+                    .with_title(&title)
+                    .with_inner_size([640.0, 480.0])
+                    .with_close_button(true),
+                |ctx, class| {
+                    if ctx.input(|input| input.viewport().close_requested()) {
+                        close_requested = true;
                     }
-                });
+                    let mut embedded_open = true;
+                    let draw = |ui: &mut egui::Ui| draw_figure(ui, fig_index, &figure);
+                    if class == egui::ViewportClass::Embedded {
+                        egui::Window::new(&title)
+                            .id(egui::Id::new(("figure-window", fig_index)))
+                            .open(&mut embedded_open)
+                            .resizable(true)
+                            .default_size([480.0, 320.0])
+                            .default_pos(egui::pos2(
+                                48.0 + fig_index as f32 * 32.0,
+                                72.0 + fig_index as f32 * 32.0,
+                            ))
+                            .show(ctx, draw);
+                        if !embedded_open {
+                            close_requested = true;
+                        }
+                    } else {
+                        egui::CentralPanel::default().show(ctx, draw);
+                    }
+                },
+            );
+            if close_requested {
+                closed.push(fig_index);
+            }
         }
+        for index in closed {
+            if let Some(figure) = self.session.figures.get_mut(index) {
+                *figure = openmat_lib::Figure::new();
+            }
+        }
+    }
+}
+
+fn draw_figure(ui: &mut egui::Ui, fig_index: usize, figure: &openmat_lib::Figure) {
+    for (index, axes) in figure.axes.iter().enumerate() {
+        if axes.series.is_empty() {
+            continue;
+        }
+        let title = if axes.title.is_empty() {
+            format!("axes {}", index + 1)
+        } else {
+            axes.title.clone()
+        };
+        ui.label(format!("{title}    {}    {}", axes.xlabel, axes.ylabel));
+        egui_plot::Plot::new(format!("fig-{fig_index}-axes-{index}"))
+            .height(220.0)
+            .show(ui, |plot_ui| {
+                for series in &axes.series {
+                    let points: egui_plot::PlotPoints = series
+                        .xs
+                        .iter()
+                        .zip(series.ys.iter())
+                        .map(|(x, y)| [*x, *y])
+                        .collect();
+                    plot_ui.line(egui_plot::Line::new(points).name(if series.label.is_empty() {
+                        "series"
+                    } else {
+                        series.label.as_str()
+                    }));
+                }
+            });
     }
 }

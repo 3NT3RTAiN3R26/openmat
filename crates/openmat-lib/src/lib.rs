@@ -64,6 +64,13 @@ mod tests {
     }
 
     #[test]
+    fn close_removes_one_figure_window() {
+        let session = exec("figure(1); plot([1 2]); figure(2); plot([3 4]); close(1);").unwrap();
+        assert!(session.figures[0].axes[0].series.is_empty());
+        assert_eq!(session.figures[1].axes[0].series.len(), 1);
+    }
+
+    #[test]
     fn clf_clears_the_current_figure() {
         let session = exec("plot([1 2], [3 4]); title('sine'); clf;").unwrap();
         let axes = &session.figures[0].axes[0];

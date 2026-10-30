@@ -8,6 +8,7 @@ pub fn register(session: &mut Session) {
         ("stem", stem),
         ("figure", figure),
         ("clf", clf),
+        ("close", close_figure),
         ("hold", hold),
         ("xlabel", xlabel),
         ("ylabel", ylabel),
@@ -96,6 +97,34 @@ fn clf(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
     }
     *session.current_figure_mut() = openmat_core::Figure::new();
+    Ok(crate::util::empty())
+}
+
+fn close_figure(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    if args.is_empty() {
+        *session.current_figure_mut() = openmat_core::Figure::new();
+        return Ok(crate::util::empty());
+    }
+    if let Some(Value::Char(text)) = args.first() {
+        if text == "all" {
+            for figure in &mut session.figures {
+                *figure = openmat_core::Figure::new();
+            }
+            return Ok(crate::util::empty());
+        }
+        return Err(openmat_core::MatError::new(format!(
+            "close does not support '{text}'"
+        )));
+    }
+    for arg in args {
+        let n = positive(arg.real_scalar()?)?;
+        if n == 0 || n > session.figures.len() {
+            return Err(openmat_core::MatError::new(format!(
+                "figure {n} is not open"
+            )));
+        }
+        session.figures[n - 1] = openmat_core::Figure::new();
+    }
     Ok(crate::util::empty())
 }
 

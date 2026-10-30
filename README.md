@@ -54,7 +54,7 @@ Lineare Algebra und Basisfunktionen: `zeros`, `ones`, `eye`, `size`, `length`, `
 
 `clear` entfernt Variablen aus dem Workspace. `clear name` entfernt einen Namen, `clear` und `clear all` leeren den Workspace. `pi`, `i`, `j`, `inf`, `nan`, `true` und `false` bleiben erhalten. `home` löscht die bisherige Konsolenausgabe; Text nach `home` bleibt sichtbar. Beide Funktionen gehen auch ohne Klammern: `clear x` und `home`.
 
-Plots: `plot`, `stem`, `figure`, `clf`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. `clf` und `clf reset` leeren die aktuelle Figure. Die GUI öffnet für jede Figure mit Inhalt ein eigenes Fenster. Unter **Options** wählt **Reuse Figure** die aktuelle Figure; **New Figure** öffnet vor `plot`, `stem`, `step` und `bode` eine neue Figure, wenn die aktuelle schon Kurven hat und `hold` aus ist. `figure(n)` wählt in beiden Modi diese Figure. Die CLI behält die Daten und bricht nicht ab.
+Plots: `plot`, `stem`, `figure`, `clf`, `close`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. `clf` und `clf reset` leeren die aktuelle Figure. `close`, `close(n)` und `close all` schließen Figures. Die GUI öffnet für jede Figure mit Inhalt ein eigenes Fenster, das sich auf den Desktop schieben lässt. Das Schließen-Kreuz macht dasselbe wie `close(n)`. Unter **Options** wählt **Reuse Figure** die aktuelle Figure; **New Figure** öffnet vor `plot`, `stem`, `step` und `bode` eine neue Figure, wenn die aktuelle schon Kurven hat und `hold` aus ist. `figure(n)` wählt in beiden Modi diese Figure. Die CLI behält die Daten und bricht nicht ab.
 
 Signalverarbeitung: `fft`, `ifft`, `filter`, `conv`, `freqz`, `butter`, `fir1`. `butter` benutzt die bilineare Transformation mit Vorverzerrung. `wn = 1` ist die Nyquist-Frequenz. Aufruf: `[b, a] = butter(n, wn)`.
 
