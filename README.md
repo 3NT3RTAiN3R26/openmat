@@ -18,10 +18,25 @@ cargo test --workspace
 cargo run -p openmat-cli -- examples/linalg.m
 cargo run -p openmat-cli -- -e "eig([2 0; 0 3])"
 cargo run -p openmat-gui
+cargo run -p openmat-gui -- examples/plot_sine.m
 cargo run -p openmat-agent -- --proto udp --bind 0.0.0.0:5000
 ```
 
-Ohne Datei startet `openmat` eine REPL, wenn das Terminal interaktiv ist. Sonst liest es stdin.
+Ohne Datei startet `openmat` eine REPL, wenn das Terminal interaktiv ist. Sonst liest es stdin. Ein Pfad hinter `openmat-gui` lädt die Datei in den Editor und zeigt ihren Ordner links.
+
+## GUI
+
+Die Desktop-Oberfläche hat links den Dateibrowser, in der Mitte Editor, Konsole und Plot, rechts den Workspace.
+
+**Files** listet den aktuellen Ordner mit Name, Size, Date Modified und Type. Ein Klick auf die Spaltenüberschrift sortiert. **Up** oder ein Doppelklick auf `..` geht eine Ebene nach oben. Ein Doppelklick auf einen Ordner öffnet ihn, ein Doppelklick auf eine `.m`-Datei lädt sie in den Editor. **Open…** und Strg+O öffnen den Dateidialog. Eine Datei kann auch auf das Fenster gezogen werden.
+
+Der Editor zeigt Zeilennummern. Ein Klick auf eine Nummer setzt oder entfernt einen Breakpoint (roter Punkt).
+
+**Run** führt das Skript aus und hält an Breakpoints an. **Step** startet an der ersten Anweisung und geht danach eine Anweisung weiter, auch in Schleifen und Funktionen. Die aktuelle Zeile ist markiert, der Workspace zeigt die Variablen bis dahin. **Stop** bricht ab und behält die schon gesetzten Variablen. Während einer Sitzung ist der Editor gesperrt.
+
+**Workspace** zeigt nach dem Lauf Name, Value, Size und Class. Skalare und kurze Vektoren stehen in der Value-Spalte. Ein Doppelklick öffnet die Variable als Tabelle, auch für `fi`, Cells und Structs. Konstanten wie `pi` und `i` werden nicht gelistet.
+
+Plots aus `plot`, `stem`, `step` und `bode` erscheinen unter der Konsole.
 
 ## Sprache
 
@@ -37,7 +52,7 @@ Ohne Datei startet `openmat` eine REPL, wenn das Terminal interaktiv ist. Sonst 
 
 Lineare Algebra und Basisfunktionen: `zeros`, `ones`, `eye`, `size`, `length`, `numel`, `ndims`, `isempty`, `diag`, `linspace`, `reshape`, `sum`, `mean`, `min`, `max`, `inv`, `det`, `eig`, `svd`, `\`, `/`, `rand`, `randn`, `rng`, `abs`, `sqrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log10`, `floor`, `ceil`, `round`, `sign`, `real`, `imag`, `conj`, `transpose`, `ctranspose`, `disp`, `fprintf`, `sprintf`.
 
-Plots: `plot`, `stem`, `figure`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. Die GUI zeichnet die Figure. Die CLI behält die Daten und bricht nicht ab.
+Plots: `plot`, `stem`, `figure`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. Die GUI zeichnet die Figure unter der Konsole. Die CLI behält die Daten und bricht nicht ab.
 
 Signalverarbeitung: `fft`, `ifft`, `filter`, `conv`, `freqz`, `butter`, `fir1`. `butter` benutzt die bilineare Transformation mit Vorverzerrung. `wn = 1` ist die Nyquist-Frequenz. Aufruf: `[b, a] = butter(n, wn)`.
 
