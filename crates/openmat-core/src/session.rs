@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::ast::Stmt;
 use crate::debug::DebugCtl;
 use crate::error::{MatError, MatResult};
-use crate::plot::Figure;
+use crate::plot::{Figure, FigureWindowStyle};
 use crate::value::{Matrix, Value};
 
 pub type Builtin = fn(&mut Session, &[Value]) -> MatResult<Value>;
@@ -29,6 +29,8 @@ pub struct Session {
     /// When set, `plot`, `stem`, `step`, and `bode` open a new figure if the
     /// current one already has curves and `hold` is off.
     pub new_figure_on_plot: bool,
+    /// MATLAB root property `DefaultFigureWindowStyle`.
+    pub default_figure_window_style: FigureWindowStyle,
     pub nargout: usize,
     pub rng: u64,
     pub ldiv_hook: Option<MatBin>,
@@ -53,6 +55,7 @@ impl Session {
             output: String::new(),
             output_homed: false,
             new_figure_on_plot: false,
+            default_figure_window_style: FigureWindowStyle::Normal,
             nargout: 1,
             rng: 0x1234_5678_9abc_def0,
             ldiv_hook: None,
@@ -115,6 +118,12 @@ impl Session {
     }
 
     /// Removes workspace variables and restores `pi`, `i`, `true`, and the other constants.
+    pub fn styled_figure(&self) -> Figure {
+        let mut figure = Figure::new();
+        figure.window_style = self.default_figure_window_style;
+        figure
+    }
+
     pub fn clear_workspace(&mut self) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.clear();
@@ -160,7 +169,7 @@ impl Session {
 
     pub fn current_figure_mut(&mut self) -> &mut Figure {
         if self.figures.is_empty() {
-            self.figures.push(Figure::new());
+            self.figures.push(self.styled_figure());
             self.current_figure = 0;
         }
         if self.current_figure >= self.figures.len() {

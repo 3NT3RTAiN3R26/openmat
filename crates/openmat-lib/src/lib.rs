@@ -64,6 +64,32 @@ mod tests {
     }
 
     #[test]
+    fn default_figure_window_style_applies_to_new_figures() {
+        let session = exec(
+            "plot([1 2]); set(0, 'DefaultFigureWindowStyle', 'docked'); figure; plot([3 4]);",
+        )
+        .unwrap();
+        assert_eq!(
+            session.default_figure_window_style,
+            openmat_core::FigureWindowStyle::Docked
+        );
+        assert_eq!(
+            session.figures[0].window_style,
+            openmat_core::FigureWindowStyle::Normal
+        );
+        assert_eq!(
+            session.figures[1].window_style,
+            openmat_core::FigureWindowStyle::Docked
+        );
+
+        let session = exec("set(0, 'DefaultFigureWindowStyle', 'normal');").unwrap();
+        assert_eq!(
+            session.default_figure_window_style,
+            openmat_core::FigureWindowStyle::Normal
+        );
+    }
+
+    #[test]
     fn close_removes_one_figure_window() {
         let session = exec("figure(1); plot([1 2]); figure(2); plot([3 4]); close(1);").unwrap();
         assert!(session.figures[0].axes[0].series.is_empty());

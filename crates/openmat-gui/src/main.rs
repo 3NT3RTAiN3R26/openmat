@@ -91,6 +91,7 @@ struct OpenmatApp {
     debug_run: Option<DebugRun>,
     console_base: String,
     new_figure: bool,
+    docked_tab: usize,
 }
 
 impl OpenmatApp {
@@ -112,6 +113,7 @@ impl OpenmatApp {
             debug_run: None,
             console_base: String::new(),
             new_figure: false,
+            docked_tab: 0,
         };
         if let Some(arg) = std::env::args().nth(1) {
             app.load_path(PathBuf::from(arg));
@@ -1157,50 +1159,126 @@ impl OpenmatApp {
             .map(|(index, figure)| (index, figure.clone()))
             .collect();
         let mut closed = Vec::new();
-        for (fig_index, figure) in open_figures {
-            let mut close_requested = false;
-            let title = format!("Figure {}", fig_index + 1);
-            ctx.show_viewport_immediate(
-                egui::ViewportId::from_hash_of(("openmat-figure", fig_index)),
-                egui::ViewportBuilder::default()
-                    .with_title(&title)
-                    .with_inner_size([640.0, 480.0])
-                    .with_close_button(true),
-                |ctx, class| {
-                    if ctx.input(|input| input.viewport().close_requested()) {
-                        close_requested = true;
-                    }
-                    let mut embedded_open = true;
-                    let draw = |ui: &mut egui::Ui| draw_figure(ui, fig_index, &figure);
-                    if class == egui::ViewportClass::Embedded {
-                        egui::Window::new(&title)
-                            .id(egui::Id::new(("figure-window", fig_index)))
-                            .open(&mut embedded_open)
-                            .resizable(true)
-                            .default_size([480.0, 320.0])
-                            .default_pos(egui::pos2(
-                                48.0 + fig_index as f32 * 32.0,
-                                72.0 + fig_index as f32 * 32.0,
-                            ))
-                            .show(ctx, draw);
-                        if !embedded_open {
-                            close_requested = true;
-                        }
-                    } else {
-                        egui::CentralPanel::default().show(ctx, draw);
-                    }
-                },
-            );
-            if close_requested {
+        let (docked, normal): (Vec<_>, Vec<_>) = open_figures
+            .into_iter()
+            .partition(|(_, figure)| figure.window_style == openmat_lib::FigureWindowStyle::Docked);
+        for (fig_index, figure) in normal {
+            if show_native_figure(ctx, fig_index, &figure) {
                 closed.push(fig_index);
             }
         }
+        if !docked.is_empty() {
+            closed.extend(show_docked_figures(ctx, &docked, &mut self.docked_tab));
+        }
         for index in closed {
             if let Some(figure) = self.session.figures.get_mut(index) {
+                let style = figure.window_style;
                 *figure = openmat_lib::Figure::new();
+                figure.window_style = style;
             }
         }
     }
+}
+
+fn show_native_figure(
+    ctx: &egui::Context,
+    fig_index: usize,
+    figure: &openmat_lib::Figure,
+) -> bool {
+    let mut close_requested = false;
+    let title = format!("Figure {}", fig_index + 1);
+    ctx.show_viewport_immediate(
+        egui::ViewportId::from_hash_of(("openmat-figure", fig_index)),
+        egui::ViewportBuilder::default()
+            .with_title(&title)
+            .with_inner_size([640.0, 480.0])
+            .with_close_button(true),
+        |ctx, class| {
+            if ctx.input(|input| input.viewport().close_requested()) {
+                close_requested = true;
+            }
+            let mut embedded_open = true;
+            let draw = |ui: &mut egui::Ui| draw_figure(ui, fig_index, figure);
+            if class == egui::ViewportClass::Embedded {
+                egui::Window::new(&title)
+                    .id(egui::Id::new(("figure-window", fig_index)))
+                    .open(&mut embedded_open)
+                    .resizable(true)
+                    .default_size([480.0, 320.0])
+                    .default_pos(egui::pos2(
+                        48.0 + fig_index as f32 * 32.0,
+                        72.0 + fig_index as f32 * 32.0,
+                    ))
+                    .show(ctx, draw);
+                if !embedded_open {
+                    close_requested = true;
+                }
+            } else {
+                egui::CentralPanel::default().show(ctx, draw);
+            }
+        },
+    );
+    close_requested
+}
+
+fn show_docked_figures(
+    ctx: &egui::Context,
+    figures: &[(usize, openmat_lib::Figure)],
+    selected: &mut usize,
+) -> Vec<usize> {
+    if !figures.iter().any(|(index, _)| *index == *selected) {
+        *selected = figures[0].0;
+    }
+    let mut close_requested = false;
+    let mut close_tab = None;
+    ctx.show_viewport_immediate(
+        egui::ViewportId::from_hash_of("openmat-figures-dock"),
+        egui::ViewportBuilder::default()
+            .with_title("Figures")
+            .with_inner_size([720.0, 520.0])
+            .with_close_button(true),
+        |ctx, class| {
+            if ctx.input(|input| input.viewport().close_requested()) {
+                close_requested = true;
+            }
+            let mut embedded_open = true;
+            let draw = |ui: &mut egui::Ui| {
+                ui.horizontal(|ui| {
+                    for (index, _) in figures {
+                        if ui
+                            .selectable_label(*selected == *index, format!("Figure {}", index + 1))
+                            .clicked()
+                        {
+                            *selected = *index;
+                        }
+                    }
+                    if ui.button("Close tab").clicked() {
+                        close_tab = Some(*selected);
+                    }
+                });
+                if let Some((_, figure)) = figures.iter().find(|(index, _)| *index == *selected) {
+                    draw_figure(ui, *selected, figure);
+                }
+            };
+            if class == egui::ViewportClass::Embedded {
+                egui::Window::new("Figures")
+                    .id(egui::Id::new("docked-figures"))
+                    .open(&mut embedded_open)
+                    .resizable(true)
+                    .default_size([520.0, 360.0])
+                    .show(ctx, draw);
+                if !embedded_open {
+                    close_requested = true;
+                }
+            } else {
+                egui::CentralPanel::default().show(ctx, draw);
+            }
+        },
+    );
+    if close_requested {
+        return figures.iter().map(|(index, _)| *index).collect();
+    }
+    close_tab.into_iter().collect()
 }
 
 fn draw_figure(ui: &mut egui::Ui, fig_index: usize, figure: &openmat_lib::Figure) {

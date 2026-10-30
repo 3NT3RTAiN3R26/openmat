@@ -9,6 +9,7 @@ pub fn register(session: &mut Session) {
         ("figure", figure),
         ("clf", clf),
         ("close", close_figure),
+        ("set", set_root),
         ("hold", hold),
         ("xlabel", xlabel),
         ("ylabel", ylabel),
@@ -39,7 +40,7 @@ pub(crate) fn prepare_plot_target(session: &mut Session) {
     let held = figure.axes.get(active).is_some_and(|axes| axes.hold);
     let busy = figure.axes.iter().any(|axes| !axes.series.is_empty());
     if busy && !held {
-        session.figures.push(openmat_core::Figure::new());
+        session.figures.push(session.styled_figure());
         session.current_figure = session.figures.len() - 1;
     }
 }
@@ -78,7 +79,7 @@ fn figure(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         return Err(openmat_core::MatError::new("figure number starts at 1"));
     }
     while session.figures.len() < n {
-        session.figures.push(openmat_core::Figure::new());
+        session.figures.push(session.styled_figure());
     }
     session.current_figure = n - 1;
     Ok(Value::scalar(n as f64))
@@ -96,19 +97,63 @@ fn clf(session: &mut Session, args: &[Value]) -> MatResult<Value> {
             _ => return Err(openmat_core::MatError::new("clf expects 'reset' or no arguments")),
         }
     }
-    *session.current_figure_mut() = openmat_core::Figure::new();
+    reset_figure(session.current_figure_mut());
     Ok(crate::util::empty())
+}
+
+fn set_root(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 3)?;
+    let handle = args[0].real_scalar()?;
+    if handle != 0.0 {
+        return Err(openmat_core::MatError::new(
+            "set currently only supports the root object 0",
+        ));
+    }
+    let property = char_arg(args, 1)?;
+    if !property.eq_ignore_ascii_case("DefaultFigureWindowStyle") {
+        return Err(openmat_core::MatError::new(format!(
+            "set does not support '{property}'"
+        )));
+    }
+    let value = char_arg(args, 2)?;
+    let style = match value.to_ascii_lowercase().as_str() {
+        "normal" => openmat_core::FigureWindowStyle::Normal,
+        "docked" => openmat_core::FigureWindowStyle::Docked,
+        "modal" => {
+            return Err(openmat_core::MatError::new(
+                "DefaultFigureWindowStyle 'modal' is not supported",
+            ))
+        }
+        other => {
+            return Err(openmat_core::MatError::new(format!(
+                "DefaultFigureWindowStyle must be 'normal' or 'docked', not '{other}'"
+            )))
+        }
+    };
+    session.default_figure_window_style = style;
+    for figure in &mut session.figures {
+        if figure.axes.iter().all(|axes| axes.series.is_empty()) {
+            figure.window_style = style;
+        }
+    }
+    Ok(crate::util::empty())
+}
+
+fn reset_figure(figure: &mut openmat_core::Figure) {
+    let window_style = figure.window_style;
+    *figure = openmat_core::Figure::new();
+    figure.window_style = window_style;
 }
 
 fn close_figure(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     if args.is_empty() {
-        *session.current_figure_mut() = openmat_core::Figure::new();
+        reset_figure(session.current_figure_mut());
         return Ok(crate::util::empty());
     }
     if let Some(Value::Char(text)) = args.first() {
         if text == "all" {
             for figure in &mut session.figures {
-                *figure = openmat_core::Figure::new();
+                reset_figure(figure);
             }
             return Ok(crate::util::empty());
         }
@@ -123,7 +168,7 @@ fn close_figure(session: &mut Session, args: &[Value]) -> MatResult<Value> {
                 "figure {n} is not open"
             )));
         }
-        session.figures[n - 1] = openmat_core::Figure::new();
+        reset_figure(&mut session.figures[n - 1]);
     }
     Ok(crate::util::empty())
 }

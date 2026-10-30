@@ -39,12 +39,24 @@ impl Default for Axes {
     }
 }
 
+/// How a newly created figure is shown. This is MATLAB's `DefaultFigureWindowStyle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FigureWindowStyle {
+    /// A separate desktop window. MATLAB's `'normal'`.
+    #[default]
+    Normal,
+    /// A tab in one shared figure window. MATLAB's `'docked'`.
+    Docked,
+}
+
 #[derive(Debug, Clone)]
 pub struct Figure {
     pub axes: Vec<Axes>,
     pub rows: usize,
     pub cols: usize,
     pub active: usize,
+    /// Style captured when this figure was created.
+    pub window_style: FigureWindowStyle,
 }
 
 impl Figure {
@@ -54,6 +66,7 @@ impl Figure {
             rows: 1,
             cols: 1,
             active: 0,
+            window_style: FigureWindowStyle::Normal,
         }
     }
 
