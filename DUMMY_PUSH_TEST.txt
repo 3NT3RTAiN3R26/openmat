@@ -1,0 +1,2 @@
+Dummy-Datei, nur um Pull und Push von diesem Cloud-Agenten nach openmat zu prüfen.
+Kann danach gelöscht werden.
