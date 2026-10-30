@@ -43,39 +43,41 @@ pub fn format_source(src: &str) -> String {
             }
             continue;
         }
-        let keyword = first_keyword(trimmed);
-        let print_at = match keyword {
-            Some("end") => match depth.last().copied() {
-                Some(Frame::Switch) => {
-                    case_body = false;
-                    depth.pop();
-                    depth.len()
-                }
-                Some(Frame::Block) => {
-                    depth.pop();
-                    indent_of(&depth, case_body)
-                }
-                None => 0,
-            },
-            Some("else" | "elseif") => depth.len().saturating_sub(1) + usize::from(case_body),
-            Some("case" | "otherwise") => {
-                case_body = false;
-                depth.len()
-            }
-            _ => indent_of(&depth, case_body),
-        };
         if trimmed.is_empty() {
             out.push('\n');
-        } else {
-            push_line(&mut out, print_at, trimmed);
+            continue;
         }
-        match keyword {
-            Some("if" | "for" | "while" | "function" | "try" | "classdef") => {
-                depth.push(Frame::Block);
+        for piece in statement_pieces(trimmed) {
+            let keyword = first_keyword(piece);
+            let print_at = match keyword {
+                Some("end") => match depth.last().copied() {
+                    Some(Frame::Switch) => {
+                        case_body = false;
+                        depth.pop();
+                        depth.len()
+                    }
+                    Some(Frame::Block) => {
+                        depth.pop();
+                        indent_of(&depth, case_body)
+                    }
+                    None => 0,
+                },
+                Some("else" | "elseif") => depth.len().saturating_sub(1) + usize::from(case_body),
+                Some("case" | "otherwise") => {
+                    case_body = false;
+                    depth.len()
+                }
+                _ => indent_of(&depth, case_body),
+            };
+            push_line(&mut out, print_at, piece);
+            match keyword {
+                Some("if" | "for" | "while" | "function" | "try" | "classdef") => {
+                    depth.push(Frame::Block);
+                }
+                Some("switch") => depth.push(Frame::Switch),
+                Some("case" | "otherwise") => case_body = true,
+                _ => {}
             }
-            Some("switch") => depth.push(Frame::Switch),
-            Some("case" | "otherwise") => case_body = true,
-            _ => {}
         }
     }
     if out.ends_with("\n\n") {
@@ -106,6 +108,23 @@ pub fn lint_source(src: &str) -> Vec<Diagnostic> {
                 message: "tab character; the formatter uses spaces".into(),
                 severity: Severity::Warning,
             });
+        }
+        let pieces = statement_pieces(line);
+        if pieces.len() > 1 {
+            diagnostics.push(Diagnostic {
+                line: line_no,
+                message: "more than one statement on this line".into(),
+                severity: Severity::Warning,
+            });
+        }
+        for piece in &pieces {
+            if statement_needs_semicolon(piece) {
+                diagnostics.push(Diagnostic {
+                    line: line_no,
+                    message: "statement should end with a semicolon".into(),
+                    severity: Severity::Warning,
+                });
+            }
         }
     }
     match parse(src) {
@@ -167,6 +186,83 @@ fn split_lines(src: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Splits a physical line at semicolons that separate statements.
+/// Semicolons inside `[]`, `()`, `{}`, strings, and comments stay put.
+fn statement_pieces(line: &str) -> Vec<&str> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut quote = false;
+    let mut comment = false;
+    let mut depth = 0i32;
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if comment {
+            break;
+        }
+        if quote {
+            if c == '\'' {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                quote = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '%' => comment = true,
+            '\'' => quote = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => {
+                let piece = line[start..=i].trim();
+                if !piece.is_empty() {
+                    pieces.push(piece);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let rest = line[start..].trim();
+    if !rest.is_empty() {
+        pieces.push(rest);
+    }
+    pieces
+}
+
+fn statement_needs_semicolon(piece: &str) -> bool {
+    let trimmed = piece.trim();
+    if trimmed.is_empty() || trimmed.starts_with('%') || trimmed.ends_with(';') || trimmed.ends_with("...")
+    {
+        return false;
+    }
+    !matches!(
+        first_keyword(trimmed),
+        Some(
+            "if" | "elseif"
+                | "else"
+                | "for"
+                | "while"
+                | "switch"
+                | "case"
+                | "otherwise"
+                | "end"
+                | "function"
+                | "try"
+                | "catch"
+                | "classdef"
+                | "break"
+                | "continue"
+                | "return"
+        )
+    )
+}
+
 fn first_keyword(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     if trimmed.starts_with('%') {
@@ -211,6 +307,23 @@ mod tests {
     fn leaves_matrix_spacing_alone() {
         let src = "a = [1 -2];\n";
         assert_eq!(format_source(src), src);
+        assert_eq!(format_source("m = [1, 2; 3, 4];\n"), "m = [1, 2; 3, 4];\n");
+    }
+
+    #[test]
+    fn splits_statements_and_warns_about_semicolons() {
+        let src = "hil.write(h, [1 2 3 4]);y = hil.read(h, 4)\nfprintf('v = %d\\n', v)\n";
+        assert_eq!(
+            format_source(src),
+            "hil.write(h, [1 2 3 4]);\ny = hil.read(h, 4)\nfprintf('v = %d\\n', v)\n"
+        );
+        let diagnostics = lint_source(src);
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.line == 1 && d.message.contains("more than one statement")));
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("semicolon")));
     }
 
     #[test]
