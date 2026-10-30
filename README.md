@@ -54,7 +54,7 @@ Lineare Algebra und Basisfunktionen: `zeros`, `ones`, `eye`, `size`, `length`, `
 
 `clear` entfernt Variablen aus dem Workspace. `clear name` entfernt einen Namen, `clear` und `clear all` leeren den Workspace. `pi`, `i`, `j`, `inf`, `nan`, `true` und `false` bleiben erhalten. `home` löscht die bisherige Konsolenausgabe; Text nach `home` bleibt sichtbar. Beide Funktionen gehen auch ohne Klammern: `clear x` und `home`.
 
-Plots: `plot`, `stem`, `figure`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. Die GUI zeichnet die Figure unter der Konsole. Die CLI behält die Daten und bricht nicht ab.
+Plots: `plot`, `stem`, `figure`, `clf`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. `clf` und `clf reset` leeren die aktuelle Figure. Die GUI zeichnet die Figure unter der Konsole. Die CLI behält die Daten und bricht nicht ab.
 
 Signalverarbeitung: `fft`, `ifft`, `filter`, `conv`, `freqz`, `butter`, `fir1`. `butter` benutzt die bilineare Transformation mit Vorverzerrung. `wn = 1` ist die Nyquist-Frequenz. Aufruf: `[b, a] = butter(n, wn)`.
 

@@ -7,6 +7,7 @@ pub fn register(session: &mut Session) {
         ("plot", plot as fn(&mut Session, &[Value]) -> MatResult<Value>),
         ("stem", stem),
         ("figure", figure),
+        ("clf", clf),
         ("hold", hold),
         ("xlabel", xlabel),
         ("ylabel", ylabel),
@@ -62,6 +63,22 @@ fn figure(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     }
     session.current_figure = n - 1;
     Ok(Value::scalar(n as f64))
+}
+
+fn clf(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    if let Some(arg) = args.first() {
+        match arg {
+            Value::Char(text) if text == "reset" => {}
+            Value::Char(text) => {
+                return Err(openmat_core::MatError::new(format!(
+                    "clf does not support '{text}'"
+                )));
+            }
+            _ => return Err(openmat_core::MatError::new("clf expects 'reset' or no arguments")),
+        }
+    }
+    *session.current_figure_mut() = openmat_core::Figure::new();
+    Ok(crate::util::empty())
 }
 
 fn hold(session: &mut Session, args: &[Value]) -> MatResult<Value> {

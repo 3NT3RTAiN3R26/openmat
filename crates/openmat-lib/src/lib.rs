@@ -50,6 +50,14 @@ mod tests {
     }
 
     #[test]
+    fn clf_clears_the_current_figure() {
+        let session = exec("plot([1 2], [3 4]); title('sine'); clf;").unwrap();
+        let axes = &session.figures[0].axes[0];
+        assert!(axes.series.is_empty());
+        assert!(axes.title.is_empty());
+    }
+
+    #[test]
     fn clear_removes_variables_and_home_clears_output() {
         let session = exec("x = 4; clear x;").unwrap();
         assert!(session.get("x").is_none());
