@@ -1,0 +1,16 @@
+# FPGA Horizons Explorer board. It ships in spring 2027.
+# Leave the fields empty until the datasheet and constraints are available.
+# A filled profile is enough to add the board; openmat does not need a code change.
+name = "explorer"
+fpga = ""
+
+[ethernet]
+host = ""
+port = 5000
+proto = "udp"
+
+[jtag]
+hw_server = "localhost:3121"
+device = ""
+
+[registers]

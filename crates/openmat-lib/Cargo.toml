@@ -1,0 +1,14 @@
+[package]
+name = "openmat-lib"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MATLAB-like numeric, plotting, and HIL builtins for openmat"
+
+[dependencies]
+openmat-core = { path = "../openmat-core" }
+openmat-hil = { path = "../openmat-hil" }
+nalgebra = "=0.32.6"
+num-complex = "0.4"
+rustfft = "6.2"

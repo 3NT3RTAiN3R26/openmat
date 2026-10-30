@@ -1,0 +1,17 @@
+name = "pynq_rfsoc4x2"
+fpga = "xczu48dr-ffvg1517-2-e"
+
+[ethernet]
+host = "192.168.2.99"
+port = 5000
+proto = "udp"
+
+[jtag]
+hw_server = "localhost:3121"
+device = "xczu48dr_0"
+
+[registers]
+scratch = 0
+length = 4
+status = 8
+control = 12

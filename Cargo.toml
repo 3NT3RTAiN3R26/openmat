@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/openmat-core",
+    "crates/openmat-hil",
+    "crates/openmat-lib",
+    "crates/openmat-cli",
+    "crates/openmat-gui",
+    "crates/openmat-agent",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Tobias Zoske"]

@@ -1,0 +1,17 @@
+[package]
+name = "openmat-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Desktop editor, console, workspace, and plot window for openmat"
+
+[[bin]]
+name = "openmat-gui"
+path = "src/main.rs"
+
+[dependencies]
+openmat-lib = { path = "../openmat-lib" }
+eframe = "=0.29.1"
+egui = "=0.29.1"
+egui_plot = "=0.29.0"

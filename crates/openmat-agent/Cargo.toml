@@ -1,0 +1,15 @@
+[package]
+name = "openmat-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "HIL agent for the PYNQ RFSoC ARM Linux side"
+
+[[bin]]
+name = "openmat-agent"
+path = "src/main.rs"
+
+[dependencies]
+openmat-hil = { path = "../openmat-hil" }
+clap = { version = "=4.5.23", features = ["derive"] }

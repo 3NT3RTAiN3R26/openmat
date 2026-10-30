@@ -1,0 +1,16 @@
+[package]
+name = "openmat-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Command-line MATLAB-compatible interpreter"
+
+[[bin]]
+name = "openmat"
+path = "src/main.rs"
+
+[dependencies]
+openmat-lib = { path = "../openmat-lib" }
+clap = { version = "=4.5.23", features = ["derive"] }
+rustyline = "=14.0.0"
