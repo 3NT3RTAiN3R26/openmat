@@ -50,6 +50,22 @@ mod tests {
     }
 
     #[test]
+    fn clear_removes_variables_and_home_clears_output() {
+        let session = exec("x = 4; clear x;").unwrap();
+        assert!(session.get("x").is_none());
+        assert!(session.get("pi").is_some());
+
+        let session = exec("a = 1; b = 2; clear;").unwrap();
+        assert!(session.get("a").is_none());
+        assert!(session.get("b").is_none());
+        assert!((session.get("pi").unwrap().real_scalar().unwrap() - std::f64::consts::PI).abs() < 1e-12);
+
+        let session = exec("fprintf('hi'); home; fprintf('yo');").unwrap();
+        assert_eq!(session.output, "yo");
+        assert!(session.output_homed);
+    }
+
+    #[test]
     fn arithmetic_and_matrix_literals() {
         assert!((scalar("[1 -2; 3 4]; ans(1,2)") - -2.0).abs() < 1e-9);
         assert!((scalar("[1 - 2]") - -1.0).abs() < 1e-9);

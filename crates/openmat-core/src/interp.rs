@@ -18,6 +18,7 @@ enum Flow {
 
 impl Session {
     pub fn eval_source(&mut self, src: &str) -> MatResult<()> {
+        self.output_homed = false;
         let program = parse(src)?;
         self.eval_program(&program)
     }
@@ -64,9 +65,14 @@ impl Session {
         self.checkpoint(line)?;
         match &stmt.kind {
             StmtKind::Expr { expr, suppress } => {
-                let value = self.eval(expr)?;
+                let (value, invoked) = self.eval_statement_expr(expr)?;
+                let empty_call = invoked
+                    && value
+                        .as_matrix()
+                        .map(|matrix| matrix.numel() == 0)
+                        .unwrap_or(false);
                 self.insert("ans".into(), value.clone());
-                if !suppress {
+                if !suppress && !empty_call {
                     self.writeln(&format!("ans =\n{value}"));
                 }
                 Ok(Flow::Next)
@@ -241,6 +247,18 @@ impl Session {
                 Ok(())
             }
         }
+    }
+
+    fn eval_statement_expr(&mut self, expr: &Expr) -> MatResult<(Value, bool)> {
+        if let Expr::Ident(name) = expr {
+            if self.get(name).is_none()
+                && (self.builtins.contains_key(name) || self.funcs.contains_key(name))
+            {
+                return Ok((self.call_named(name, &[])?, true));
+            }
+        }
+        let invoked = matches!(expr, Expr::Call { .. });
+        Ok((self.eval(expr)?, invoked))
     }
 
     pub fn eval(&mut self, expr: &Expr) -> MatResult<Value> {

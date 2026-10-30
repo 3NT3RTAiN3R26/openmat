@@ -389,6 +389,14 @@ fn lint_color(diagnostic: &Diagnostic) -> egui::Color32 {
     }
 }
 
+fn join_console(previous: &str, output: &str, homed: bool) -> String {
+    if homed {
+        output.to_string()
+    } else {
+        format!("{previous}{output}")
+    }
+}
+
 fn lint_line(diagnostic: &Diagnostic) -> String {
     format!("line {}: {}", diagnostic.line, diagnostic.message)
 }
@@ -1095,7 +1103,7 @@ impl OpenmatApp {
                     let _ = handle.join();
                 }
             }
-            self.console = format!("{}{}", self.console_base, done.session.output);
+            self.console = join_console(&self.console_base, &done.session.output, done.session.output_homed);
             self.session = done.session;
             self.debug_line = None;
             match done.result {
@@ -1116,7 +1124,7 @@ impl OpenmatApp {
             self.session.output = view.output.clone();
             self.session.figures = view.figures;
             self.session.current_figure = view.current_figure;
-            self.console = format!("{}{}", self.console_base, view.output);
+            self.console = join_console(&self.console_base, &view.output, view.output_homed);
         }
         ctx.request_repaint_after(Duration::from_millis(30));
     }

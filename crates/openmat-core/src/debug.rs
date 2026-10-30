@@ -27,6 +27,7 @@ pub struct DebugView {
     pub paused_line: Option<usize>,
     pub vars: HashMap<String, Value>,
     pub output: String,
+    pub output_homed: bool,
     pub figures: Vec<Figure>,
     pub current_figure: usize,
 }
@@ -37,6 +38,7 @@ impl Default for DebugView {
             paused_line: None,
             vars: HashMap::new(),
             output: String::new(),
+            output_homed: false,
             figures: Vec::new(),
             current_figure: 0,
         }
@@ -119,6 +121,7 @@ impl DebugCtl {
             view.paused_line = Some(line);
             view.vars = session.vars.clone();
             view.output = session.output.clone();
+            view.output_homed = session.output_homed;
             view.figures = session.figures.clone();
             view.current_figure = session.current_figure;
         }

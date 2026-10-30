@@ -7,6 +7,45 @@ pub fn register(session: &mut Session) {
     session.register_builtin("fprintf", fprintf);
     session.register_builtin("sprintf", sprintf);
     session.register_builtin("printf", fprintf);
+    session.register_builtin("clear", clear);
+    session.register_builtin("home", home);
+}
+
+fn clear(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    if args.is_empty() {
+        session.clear_workspace();
+        return Ok(crate::util::empty());
+    }
+    for arg in args {
+        let name = match arg {
+            Value::Char(name) => name.clone(),
+            other => {
+                return Err(MatError::new(format!(
+                    "clear expects a name, got {}",
+                    other.type_name()
+                )))
+            }
+        };
+        match name.as_str() {
+            "all" => {
+                session.clear_workspace();
+                session.funcs.clear();
+            }
+            "functions" | "function" => session.funcs.clear(),
+            "variables" | "vars" => session.clear_workspace(),
+            _ => session.clear_name(&name),
+        }
+    }
+    Ok(crate::util::empty())
+}
+
+fn home(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    if !args.is_empty() {
+        return Err(MatError::new("home does not take arguments"));
+    }
+    session.output.clear();
+    session.output_homed = true;
+    Ok(crate::util::empty())
 }
 
 fn disp(session: &mut Session, args: &[Value]) -> MatResult<Value> {

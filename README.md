@@ -30,7 +30,7 @@ Die Desktop-Oberfläche hat links den Dateibrowser, in der Mitte Editor, Konsole
 
 **Files** listet den aktuellen Ordner mit Name, Size, Date Modified und Type. Ein Klick auf die Spaltenüberschrift sortiert. **Up** oder ein Doppelklick auf `..` geht eine Ebene nach oben. Ein Doppelklick auf einen Ordner öffnet ihn, ein Doppelklick auf eine `.m`-Datei lädt sie in den Editor. **Open…** und Strg+O öffnen den Dateidialog. **Save** und Strg+S schreiben die Datei; ohne Pfad fragt ein Dialog nach dem Namen. Eine Datei kann auch auf das Fenster gezogen werden.
 
-Der Editor zeigt Zeilennummern. Ein Klick auf eine Nummer setzt oder entfernt einen Breakpoint (roter Punkt). Strg+I rückt `if`, `for`, `while`, `switch` und `function` ein und setzt mehrere Befehle, die durch `;` getrennt in einer Zeile stehen, auf eigene Zeilen. Semikolons in `[]` bleiben stehen, damit `[1, 2; 3, 4]` eine Matrix bleibt. Unter dem Editor steht **Lint**: Syntaxfehler, fehlendes `;` an einem Befehl, mehrere Befehle in einer Zeile, Tabs, Leerzeichen am Zeilenende und `break` / `continue` außerhalb einer Schleife. `if`, `else`, `end` und Kommentare brauchen kein Semikolon.
+Der Editor zeigt Zeilennummern. Ein Klick auf eine Nummer setzt oder entfernt einen Breakpoint (roter Punkt). Strg+I rückt `if`, `for`, `while`, `switch` und `function` ein und setzt mehrere Befehle, die durch `;` getrennt in einer Zeile stehen, auf eigene Zeilen. Semikolons in `[]` bleiben stehen, damit `[1, 2; 3, 4]` eine Matrix bleibt. Unter dem Editor steht **Lint**: Syntaxfehler, mehrere Befehle in einer Zeile, Tabs, Leerzeichen am Zeilenende und `break` / `continue` außerhalb einer Schleife. Ein fehlendes `;` ist kein Fehler. Die Zeile wird ausgeführt und ihr Ergebnis ausgegeben.
 
 **Run** führt das Skript aus und hält an Breakpoints an. **Step** startet an der ersten Anweisung und geht danach eine Anweisung weiter, auch in Schleifen und Funktionen. Die aktuelle Zeile ist markiert, der Workspace zeigt die Variablen bis dahin. **Stop** bricht ab und behält die schon gesetzten Variablen. Während einer Sitzung ist der Editor gesperrt.
 
@@ -50,7 +50,9 @@ Plots aus `plot`, `stem`, `step` und `bode` erscheinen unter der Konsole.
 
 ## Funktionen
 
-Lineare Algebra und Basisfunktionen: `zeros`, `ones`, `eye`, `size`, `length`, `numel`, `ndims`, `isempty`, `diag`, `linspace`, `reshape`, `sum`, `mean`, `min`, `max`, `inv`, `det`, `eig`, `svd`, `\`, `/`, `rand`, `randn`, `rng`, `abs`, `sqrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log10`, `floor`, `ceil`, `round`, `sign`, `real`, `imag`, `conj`, `transpose`, `ctranspose`, `disp`, `fprintf`, `sprintf`.
+Lineare Algebra und Basisfunktionen: `zeros`, `ones`, `eye`, `size`, `length`, `numel`, `ndims`, `isempty`, `diag`, `linspace`, `reshape`, `sum`, `mean`, `min`, `max`, `inv`, `det`, `eig`, `svd`, `\`, `/`, `rand`, `randn`, `rng`, `abs`, `sqrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log10`, `floor`, `ceil`, `round`, `sign`, `real`, `imag`, `conj`, `transpose`, `ctranspose`, `disp`, `fprintf`, `sprintf`, `clear`, `home`.
+
+`clear` entfernt Variablen aus dem Workspace. `clear name` entfernt einen Namen, `clear` und `clear all` leeren den Workspace. `pi`, `i`, `j`, `inf`, `nan`, `true` und `false` bleiben erhalten. `home` löscht die bisherige Konsolenausgabe; Text nach `home` bleibt sichtbar. Beide Funktionen gehen auch ohne Klammern: `clear x` und `home`.
 
 Plots: `plot`, `stem`, `figure`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. Die GUI zeichnet die Figure unter der Konsole. Die CLI behält die Daten und bricht nicht ab.
 

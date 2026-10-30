@@ -189,24 +189,36 @@ impl Matrix {
         if other.is_scalar() {
             return Ok(self.map(|a| f(a, other.data[0])));
         }
-        if self.rows != other.rows || self.cols != other.cols {
-            return Err(MatError::new(format!(
+        let rows = broadcast_len(self.rows, other.rows).map_err(|_| {
+            MatError::new(format!(
                 "matrix dimensions must agree ({}x{} vs {}x{})",
                 self.rows, self.cols, other.rows, other.cols
-            )));
+            ))
+        })?;
+        let cols = broadcast_len(self.cols, other.cols).map_err(|_| {
+            MatError::new(format!(
+                "matrix dimensions must agree ({}x{} vs {}x{})",
+                self.rows, self.cols, other.rows, other.cols
+            ))
+        })?;
+        let mut data = Vec::with_capacity(rows * cols);
+        for c in 0..cols {
+            for r in 0..rows {
+                data.push(f(self.expanded(r, c), other.expanded(r, c)));
+            }
         }
-        let data = self
-            .data
-            .iter()
-            .zip(other.data.iter())
-            .map(|(a, b)| f(*a, *b))
-            .collect();
         Ok(Matrix {
-            rows: self.rows,
-            cols: self.cols,
+            rows,
+            cols,
             data,
             logical: false,
         })
+    }
+
+    fn expanded(&self, row: usize, col: usize) -> Complex64 {
+        let row = if self.rows == 1 { 0 } else { row };
+        let col = if self.cols == 1 { 0 } else { col };
+        self.get(row, col)
     }
 
     pub fn matmul(&self, other: &Matrix) -> MatResult<Matrix> {
@@ -448,6 +460,16 @@ impl Value {
     }
 }
 
+fn broadcast_len(a: usize, b: usize) -> Result<usize, ()> {
+    if a == b || a == 1 {
+        Ok(b)
+    } else if b == 1 {
+        Ok(a)
+    } else {
+        Err(())
+    }
+}
+
 pub fn nearly_equal(a: f64, b: f64) -> bool {
     if a.is_nan() && b.is_nan() {
         return true;
@@ -591,4 +613,21 @@ pub fn range_values(start: f64, step: f64, end: f64) -> MatResult<Vec<f64>> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn elementwise_product_expands_a_row_and_a_column() {
+        let a = Matrix::from_reals(1, 3, vec![2.0, 4.0, 8.0]);
+        let b = Matrix::from_reals(3, 1, vec![1.0, 2.0, 3.0]);
+        let c = a.ew(&b, |x, y| x * y).unwrap();
+        assert_eq!((c.rows, c.cols), (3, 3));
+        assert_eq!(
+            c.reals().unwrap(),
+            vec![2.0, 4.0, 6.0, 4.0, 8.0, 12.0, 8.0, 16.0, 24.0]
+        );
+    }
 }

@@ -24,6 +24,8 @@ pub struct Session {
     pub figures: Vec<Figure>,
     pub current_figure: usize,
     pub output: String,
+    /// Set by `home`. The GUI replaces the console instead of appending.
+    pub output_homed: bool,
     pub nargout: usize,
     pub rng: u64,
     pub ldiv_hook: Option<MatBin>,
@@ -46,6 +48,7 @@ impl Session {
             figures: vec![Figure::new()],
             current_figure: 0,
             output: String::new(),
+            output_homed: false,
             nargout: 1,
             rng: 0x1234_5678_9abc_def0,
             ldiv_hook: None,
@@ -63,15 +66,24 @@ impl Session {
     }
 
     fn install_constants(&mut self) {
-        self.vars.insert("pi".into(), Value::scalar(std::f64::consts::PI));
-        self.vars.insert("i".into(), Value::complex(0.0, 1.0));
-        self.vars.insert("j".into(), Value::complex(0.0, 1.0));
-        self.vars.insert("inf".into(), Value::scalar(f64::INFINITY));
-        self.vars.insert("Inf".into(), Value::scalar(f64::INFINITY));
-        self.vars.insert("nan".into(), Value::scalar(f64::NAN));
-        self.vars.insert("NaN".into(), Value::scalar(f64::NAN));
-        self.vars.insert("true".into(), Value::logical(true));
-        self.vars.insert("false".into(), Value::logical(false));
+        for name in [
+            "pi", "i", "j", "inf", "Inf", "nan", "NaN", "true", "false",
+        ] {
+            self.install_constant(name);
+        }
+    }
+
+    fn install_constant(&mut self, name: &str) {
+        let value = match name {
+            "pi" => Value::scalar(std::f64::consts::PI),
+            "i" | "j" => Value::complex(0.0, 1.0),
+            "inf" | "Inf" => Value::scalar(f64::INFINITY),
+            "nan" | "NaN" => Value::scalar(f64::NAN),
+            "true" => Value::logical(true),
+            "false" => Value::logical(false),
+            _ => return,
+        };
+        self.vars.insert(name.into(), value);
     }
 
     pub fn register_builtin(&mut self, name: &str, func: Builtin) {
@@ -96,6 +108,27 @@ impl Session {
         } else {
             self.vars.insert(name, value);
         }
+    }
+
+    /// Removes workspace variables and restores `pi`, `i`, `true`, and the other constants.
+    pub fn clear_workspace(&mut self) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.clear();
+            return;
+        }
+        self.vars.clear();
+        self.install_constants();
+    }
+
+    /// Removes one name. A cleared constant comes back, as it does in MATLAB.
+    pub fn clear_name(&mut self, name: &str) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.remove(name);
+            return;
+        }
+        self.vars.remove(name);
+        self.funcs.remove(name);
+        self.install_constant(name);
     }
 
     pub fn writeln(&mut self, text: &str) {

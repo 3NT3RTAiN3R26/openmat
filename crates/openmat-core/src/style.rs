@@ -109,22 +109,12 @@ pub fn lint_source(src: &str) -> Vec<Diagnostic> {
                 severity: Severity::Warning,
             });
         }
-        let pieces = statement_pieces(line);
-        if pieces.len() > 1 {
+        if statement_pieces(line).len() > 1 {
             diagnostics.push(Diagnostic {
                 line: line_no,
                 message: "more than one statement on this line".into(),
                 severity: Severity::Warning,
             });
-        }
-        for piece in &pieces {
-            if statement_needs_semicolon(piece) {
-                diagnostics.push(Diagnostic {
-                    line: line_no,
-                    message: "statement should end with a semicolon".into(),
-                    severity: Severity::Warning,
-                });
-            }
         }
     }
     match parse(src) {
@@ -235,34 +225,6 @@ fn statement_pieces(line: &str) -> Vec<&str> {
     pieces
 }
 
-fn statement_needs_semicolon(piece: &str) -> bool {
-    let trimmed = piece.trim();
-    if trimmed.is_empty() || trimmed.starts_with('%') || trimmed.ends_with(';') || trimmed.ends_with("...")
-    {
-        return false;
-    }
-    !matches!(
-        first_keyword(trimmed),
-        Some(
-            "if" | "elseif"
-                | "else"
-                | "for"
-                | "while"
-                | "switch"
-                | "case"
-                | "otherwise"
-                | "end"
-                | "function"
-                | "try"
-                | "catch"
-                | "classdef"
-                | "break"
-                | "continue"
-                | "return"
-        )
-    )
-}
-
 fn first_keyword(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     if trimmed.starts_with('%') {
@@ -323,7 +285,7 @@ mod tests {
             .any(|d| d.line == 1 && d.message.contains("more than one statement")));
         assert!(diagnostics
             .iter()
-            .any(|d| d.message.contains("semicolon")));
+            .all(|d| !d.message.contains("semicolon")));
     }
 
     #[test]

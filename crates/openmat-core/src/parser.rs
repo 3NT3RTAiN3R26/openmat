@@ -70,7 +70,9 @@ impl Parser {
             return Err(self.err("global and persistent are not supported"));
         } else {
             let save = self.pos;
-            if let Some(targets) = self.try_lvalues() {
+            if let Some(command) = self.parse_command()? {
+                command
+            } else if let Some(targets) = self.try_lvalues() {
                 if self.is(&TokenKind::Assign) {
                     self.bump();
                     let expr = self.parse_expr(0)?;
@@ -97,6 +99,51 @@ impl Parser {
             }
         };
         Ok(Stmt::new(line, kind))
+    }
+
+    /// `clear x y` is the command form of `clear('x','y')`.
+    fn parse_command(&mut self) -> MatResult<Option<StmtKind>> {
+        let TokenKind::Ident(name) = &self.current().kind else {
+            return Ok(None);
+        };
+        if name == "end" {
+            return Ok(None);
+        }
+        let name = name.clone();
+        let Some(next) = self.tokens.get(self.pos + 1) else {
+            return Ok(None);
+        };
+        if !matches!(
+            next.kind,
+            TokenKind::Ident(_) | TokenKind::String(_) | TokenKind::Number(_)
+        ) {
+            return Ok(None);
+        }
+        self.bump();
+        let mut args = Vec::new();
+        loop {
+            match self.current().kind.clone() {
+                TokenKind::Ident(text) | TokenKind::String(text) => {
+                    args.push(Expr::String(text));
+                    self.bump();
+                }
+                TokenKind::Number(value) => {
+                    args.push(Expr::Number(value));
+                    self.bump();
+                }
+                TokenKind::Comma => {
+                    self.bump();
+                }
+                _ => break,
+            }
+        }
+        Ok(Some(StmtKind::Expr {
+            expr: Expr::Call {
+                callee: Box::new(Expr::Ident(name)),
+                args,
+            },
+            suppress: true,
+        }))
     }
 
     fn parse_if(&mut self) -> MatResult<StmtKind> {
