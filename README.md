@@ -54,7 +54,7 @@ Lineare Algebra und Basisfunktionen: `zeros`, `ones`, `eye`, `size`, `length`, `
 
 `clear` entfernt Variablen aus dem Workspace. `clear name` entfernt einen Namen, `clear` und `clear all` leeren den Workspace. `pi`, `i`, `j`, `inf`, `nan`, `true` und `false` bleiben erhalten. `home` löscht die bisherige Konsolenausgabe; Text nach `home` bleibt sichtbar. Beide Funktionen gehen auch ohne Klammern: `clear x` und `home`.
 
-Plots: `plot`, `stem`, `figure`, `clf`, `close`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. `clf` und `clf reset` leeren die aktuelle Figure. `close`, `close(n)` und `close all` schließen Figures. Die GUI öffnet für jede Figure mit Inhalt ein eigenes Fenster, das sich auf den Desktop schieben lässt. Das Schließen-Kreuz macht dasselbe wie `close(n)`. `set(0, 'DefaultFigureWindowStyle', 'normal')` legt danach erzeugte Figures als eigene Fenster an. `set(0, 'DefaultFigureWindowStyle', 'docked')` legt sie als Tabs in einem gemeinsamen Fenster an. Das gilt für Figures, die nach dem `set` entstehen. Eine Figure, die schon Kurven hat, behält ihre bisherige Darstellung. Unter **Options** wählt **Reuse Figure** die aktuelle Figure; **New Figure** öffnet vor `plot`, `stem`, `step` und `bode` eine neue Figure, wenn die aktuelle schon Kurven hat und `hold` aus ist. `figure(n)` wählt in beiden Modi diese Figure. Die CLI behält die Daten und bricht nicht ab.
+Plots: `plot`, `stem`, `figure`, `clf`, `close`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. `clf` und `clf reset` leeren die aktuelle Figure. `close`, `close(n)` und `close all` schließen Figures. Die GUI öffnet für jede Figure mit Inhalt ein eigenes Fenster, das sich auf den Desktop schieben lässt. Das Schließen-Kreuz macht dasselbe wie `close(n)`. Der Projekt-Default ist `docked`: `set(0, 'DefaultFigureWindowStyle', 'docked')`. Danach erzeugte Figures erscheinen als Tabs in einem gemeinsamen Fenster. `set(0, 'DefaultFigureWindowStyle', 'normal')` legt sie als eigene Fenster an. Das gilt für Figures, die nach dem `set` entstehen. Eine Figure, die schon Kurven hat, behält ihre bisherige Darstellung. Unter **Options** wählt **Reuse Figure** die aktuelle Figure; **New Figure** öffnet vor `plot`, `stem`, `step` und `bode` eine neue Figure, wenn die aktuelle schon Kurven hat und `hold` aus ist. `figure(n)` wählt in beiden Modi diese Figure. Die CLI behält die Daten und bricht nicht ab.
 
 Signalverarbeitung: `fft`, `ifft`, `filter`, `conv`, `freqz`, `butter`, `fir1`. `butter` benutzt die bilineare Transformation mit Vorverzerrung. `wn = 1` ist die Nyquist-Frequenz. Aufruf: `[b, a] = butter(n, wn)`.
 
@@ -96,7 +96,7 @@ Der Loopback-Transport und die Protokolltests laufen ohne Board: `cargo run -p o
 Jedes Skript beginnt mit `clear` und `home`.
 
 - `examples/linalg.m`
-- `examples/plot_sine.m`
+- `examples/plot_sine.m` zeichnet Sinus und Kosinus in zwei gedockte Figures
 - `examples/dsp_demo.m`
 - `examples/fixed_point.m`
 - `examples/matrix_demo.m` zeigt `clear`, `home` und `a .* b` für eine Zeile und eine Spalte

@@ -66,20 +66,20 @@ mod tests {
     #[test]
     fn default_figure_window_style_applies_to_new_figures() {
         let session = exec(
-            "plot([1 2]); set(0, 'DefaultFigureWindowStyle', 'docked'); figure; plot([3 4]);",
+            "plot([1 2]); set(0, 'DefaultFigureWindowStyle', 'normal'); figure; plot([3 4]);",
         )
         .unwrap();
         assert_eq!(
             session.default_figure_window_style,
-            openmat_core::FigureWindowStyle::Docked
-        );
-        assert_eq!(
-            session.figures[0].window_style,
             openmat_core::FigureWindowStyle::Normal
         );
         assert_eq!(
-            session.figures[1].window_style,
+            session.figures[0].window_style,
             openmat_core::FigureWindowStyle::Docked
+        );
+        assert_eq!(
+            session.figures[1].window_style,
+            openmat_core::FigureWindowStyle::Normal
         );
 
         let session = exec("set(0, 'DefaultFigureWindowStyle', 'normal');").unwrap();

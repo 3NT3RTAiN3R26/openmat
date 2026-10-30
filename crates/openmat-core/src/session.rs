@@ -55,7 +55,7 @@ impl Session {
             output: String::new(),
             output_homed: false,
             new_figure_on_plot: false,
-            default_figure_window_style: FigureWindowStyle::Normal,
+            default_figure_window_style: FigureWindowStyle::Docked,
             nargout: 1,
             rng: 0x1234_5678_9abc_def0,
             ldiv_hook: None,

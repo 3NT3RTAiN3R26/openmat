@@ -43,9 +43,9 @@ impl Default for Axes {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FigureWindowStyle {
     /// A separate desktop window. MATLAB's `'normal'`.
-    #[default]
     Normal,
     /// A tab in one shared figure window. MATLAB's `'docked'`.
+    #[default]
     Docked,
 }
 
@@ -66,7 +66,7 @@ impl Figure {
             rows: 1,
             cols: 1,
             active: 0,
-            window_style: FigureWindowStyle::Normal,
+            window_style: FigureWindowStyle::Docked,
         }
     }
 
