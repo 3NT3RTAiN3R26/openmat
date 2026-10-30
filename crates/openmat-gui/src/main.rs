@@ -6,7 +6,10 @@ use std::time::{Duration, SystemTime};
 
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
-use openmat_lib::{format_number, DebugCtl, FuncHandle, Matrix, Session, Value};
+use openmat_lib::{
+    format_number, format_source, lint_source, DebugCtl, Diagnostic, FuncHandle, Matrix, Session,
+    Severity, Value,
+};
 
 const SAMPLE: &str = "t = linspace(0, 2*pi, 64);\ny = sin(t);\nplot(t, y);\ntitle('sine');\nxlabel('t');\n";
 
@@ -119,10 +122,17 @@ impl OpenmatApp {
 impl eframe::App for OpenmatApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_debug(ctx);
-        let open_shortcut = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O));
+        let command = |key| ctx.input(|i| i.modifiers.command && i.key_pressed(key));
+        let open_shortcut = command(egui::Key::O);
+        let save_shortcut = command(egui::Key::S);
+        let format_shortcut = command(egui::Key::I);
         let dropped = dropped_script(ctx);
         if open_shortcut {
             self.pick_file();
+        } else if save_shortcut {
+            self.save_file();
+        } else if format_shortcut {
+            self.format_editor();
         } else if let Some(path) = dropped {
             self.load_path(path);
         }
@@ -132,6 +142,12 @@ impl eframe::App for OpenmatApp {
                 ui.heading("openmat");
                 if ui.button("Open…").clicked() {
                     self.pick_file();
+                }
+                if ui.button("Save").on_hover_text("Ctrl+S").clicked() {
+                    self.save_file();
+                }
+                if ui.button("Format").on_hover_text("Ctrl+I").clicked() {
+                    self.format_editor();
                 }
                 if ui
                     .add(egui::Button::new("Run").fill(egui::Color32::from_rgb(46, 120, 64)))
@@ -211,6 +227,7 @@ impl eframe::App for OpenmatApp {
                     run.ctl.set_breakpoints(self.breakpoints.clone());
                 }
             }
+            self.show_lint(ui);
             if !self.status.is_empty() {
                 ui.colored_label(egui::Color32::from_rgb(180, 40, 40), &self.status);
             }
@@ -363,6 +380,17 @@ fn show_code_editor(
 
 fn line_at_char(text: &str, char_index: usize) -> usize {
     text.chars().take(char_index).filter(|c| *c == '\n').count() + 1
+}
+
+fn lint_color(diagnostic: &Diagnostic) -> egui::Color32 {
+    match diagnostic.severity {
+        Severity::Error => egui::Color32::from_rgb(180, 40, 40),
+        Severity::Warning => egui::Color32::from_rgb(180, 120, 30),
+    }
+}
+
+fn lint_line(diagnostic: &Diagnostic) -> String {
+    format!("line {}: {}", diagnostic.line, diagnostic.message)
 }
 
 fn is_m_file(path: &Path) -> bool {
@@ -745,6 +773,66 @@ impl OpenmatApp {
         if let Some(path) = dialog.pick_file() {
             self.load_path(path);
         }
+    }
+
+    fn save_file(&mut self) {
+        if self.debug_run.is_some() {
+            self.status = "Stop the debugger before saving.".into();
+            return;
+        }
+        let Some(path) = self.path.clone().or_else(|| self.pick_save_path()) else {
+            return;
+        };
+        match std::fs::write(&path, &self.code) {
+            Ok(()) => {
+                if let Some(parent) = path.parent() {
+                    if parent.is_dir() {
+                        self.folder = parent.to_path_buf();
+                    }
+                }
+                self.selected_file = Some(path.clone());
+                self.path = Some(path);
+                self.status.clear();
+            }
+            Err(err) => {
+                self.status = format!("cannot write {}: {err}", path.display());
+            }
+        }
+    }
+
+    fn pick_save_path(&self) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .add_filter("MATLAB script", &["m"])
+            .add_filter("All files", &["*"])
+            .set_directory(&self.folder)
+            .set_file_name("script.m")
+            .save_file()
+    }
+
+    fn format_editor(&mut self) {
+        if self.debug_run.is_some() {
+            self.status = "Stop the debugger before formatting.".into();
+            return;
+        }
+        self.code = format_source(&self.code);
+        self.status.clear();
+    }
+
+    fn show_lint(&self, ui: &mut egui::Ui) {
+        let diagnostics = lint_source(&self.code);
+        ui.label("Lint");
+        if diagnostics.is_empty() {
+            ui.weak("No issues.");
+            return;
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("lint")
+            .max_height(72.0)
+            .show(ui, |ui| {
+                for diagnostic in diagnostics.iter().take(12) {
+                    ui.colored_label(lint_color(diagnostic), lint_line(diagnostic));
+                }
+            });
     }
 
     fn load_path(&mut self, path: PathBuf) {
