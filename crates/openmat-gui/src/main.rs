@@ -800,6 +800,41 @@ impl OpenmatApp {
     }
 
     fn show_command_window(&mut self, ui: &mut egui::Ui) {
+        ui.label("Interactive Console");
+        if self.debug_run.is_some() {
+            ui.weak("Stop the debugger to use the command window.");
+        } else {
+            let prompt = if self.command_pending.is_empty() { ">>" } else { ".." };
+            let mut submit = false;
+            let mut older = false;
+            let mut newer = false;
+            ui.horizontal(|ui| {
+                ui.monospace(prompt);
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.command)
+                        .id_salt("command-line")
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+                let enter = ui.input(|input| {
+                    input.key_pressed(egui::Key::Enter) && !input.modifiers.shift
+                });
+                older = response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::ArrowUp));
+                newer = response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::ArrowDown));
+                // A single-line editor gives up focus on Enter, so `has_focus` is already false.
+                submit = response.lost_focus() && enter;
+                if submit {
+                    response.request_focus();
+                }
+            });
+            if older {
+                self.history_older();
+            } else if newer {
+                self.history_newer();
+            } else if submit {
+                self.submit_command();
+            }
+        }
         ui.label("Command Window");
         egui::ScrollArea::vertical()
             .id_salt("console")
@@ -815,36 +850,6 @@ impl OpenmatApp {
                         .font(egui::TextStyle::Monospace),
                 );
             });
-        if self.debug_run.is_some() {
-            ui.weak("Stop the debugger to use the command window.");
-            return;
-        }
-        let prompt = if self.command_pending.is_empty() { ">>" } else { ".." };
-        let mut submit = false;
-        let mut older = false;
-        let mut newer = false;
-        ui.horizontal(|ui| {
-            ui.monospace(prompt);
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.command)
-                    .id_salt("command-line")
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace),
-            );
-            let enter = ui.input(|input| {
-                input.key_pressed(egui::Key::Enter) && !input.modifiers.shift
-            });
-            older = response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::ArrowUp));
-            newer = response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::ArrowDown));
-            submit = response.has_focus() && enter;
-        });
-        if older {
-            self.history_older();
-        } else if newer {
-            self.history_newer();
-        } else if submit {
-            self.submit_command();
-        }
     }
 
     fn submit_command(&mut self) {
