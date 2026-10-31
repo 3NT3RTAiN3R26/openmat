@@ -22,3 +22,5 @@ stem(t, z);
 xlabel('t');
 ylabel('cos');
 title('cosine');
+
+

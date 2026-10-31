@@ -1,16 +1,16 @@
 # openmat
 
-**Hinweis:** MATLAB ist eine Marke von MathWorks. openmat ist nicht mit MathWorks verbunden.
+**Notice:** MATLAB is a trademark of MathWorks. openmat is not affiliated with MathWorks.
 
-openmat ist ein Open-Source-Interpreter für einen MATLAB-ähnlichen Sprachumfang, geschrieben in Rust. Er führt `.m`-Skripte aus: Matrizen, Plots, Signalverarbeitung, Regelungstechnik, Fixed-Point und eine Hardware-in-the-Loop-Schnittstelle für FPGAs.
+openmat is an open-source interpreter for a MATLAB-like language, written in Rust. It runs `.m` scripts: matrices, plots, signal processing, control systems, fixed-point, and a hardware-in-the-loop interface for FPGAs.
 
-Lizenz: [Apache License 2.0](LICENSE). Copyright 2026 Tobias Zoske.
+License: [Apache License 2.0](LICENSE). Copyright 2026 Tobias Zoske.
 
-Das ist kein vollständiger MATLAB-Ersatz. Simulink und die proprietären Toolboxen fehlen. Der unterstützte Umfang steht unten.
+This is not a complete MATLAB replacement. Simulink and the proprietary toolboxes are missing. The supported subset is listed below.
 
-## Bauen und starten
+## Build and run
 
-`rust-toolchain.toml` wählt Rust 1.99. Mit rustup reicht `cargo build`. Ohne rustup brauchst du Rust 1.85 oder neuer:
+`rust-toolchain.toml` selects Rust 1.99. With rustup, `cargo build` is enough. Without rustup you need Rust 1.85 or newer:
 
 ```bash
 cargo build --workspace
@@ -22,45 +22,43 @@ cargo run -p openmat-gui -- examples/plot_sine.m
 cargo run -p openmat-agent -- --proto udp --bind 0.0.0.0:5000
 ```
 
-Ohne Datei startet `openmat` eine REPL, wenn das Terminal interaktiv ist. Sonst liest es stdin. Ein Pfad hinter `openmat-gui` lädt die Datei in den Editor und zeigt ihren Ordner links.
+Without a file, `openmat` starts a REPL when the terminal is interactive. Otherwise it reads stdin. A path after `openmat-gui` loads that file into the editor and shows its folder on the left.
 
 ## GUI
 
-Die Desktop-Oberfläche hat links den Dateibrowser, in der Mitte Editor, Konsole und Plot, rechts den Workspace.
+The desktop window has the file browser on the left, the editor, console, and status in the center, and the workspace on the right. Figures with content open in their own windows.
 
-**Files** listet den aktuellen Ordner mit Name, Size, Date Modified und Type. Ein Klick auf die Spaltenüberschrift sortiert. **Up** oder ein Doppelklick auf `..` geht eine Ebene nach oben. Ein Doppelklick auf einen Ordner öffnet ihn, ein Doppelklick auf eine `.m`-Datei lädt sie in den Editor. **Open…** und Strg+O öffnen den Dateidialog. **Save** und Strg+S schreiben die Datei; ohne Pfad fragt ein Dialog nach dem Namen. Eine Datei kann auch auf das Fenster gezogen werden.
+**Files** lists the current folder with Name, Size, Date Modified, and Type. Click a column header to sort. **Up** or a double-click on `..` goes up one level. Double-click a folder to open it. Double-click a `.m` file to load it into the editor. **Open…** and Ctrl+O open the file dialog. **Save** and Ctrl+S write the file. If there is no path yet, a dialog asks for the name. A file can also be dropped onto the window.
 
-Der Editor zeigt Zeilennummern. Ein Klick auf eine Nummer setzt oder entfernt einen Breakpoint (roter Punkt). Strg+I rückt `if`, `for`, `while`, `switch` und `function` ein und setzt mehrere Befehle, die durch `;` getrennt in einer Zeile stehen, auf eigene Zeilen. Semikolons in `[]` bleiben stehen, damit `[1, 2; 3, 4]` eine Matrix bleibt. Unter dem Editor steht **Lint**: Syntaxfehler, mehrere Befehle in einer Zeile, Tabs, Leerzeichen am Zeilenende und `break` / `continue` außerhalb einer Schleife. Ein fehlendes `;` ist kein Fehler. Die Zeile wird ausgeführt und ihr Ergebnis ausgegeben.
+The editor shows line numbers. Click a number to set or clear a breakpoint (red dot). Ctrl+I indents `if`, `for`, `while`, `switch`, and `function`, and puts several commands separated by `;` on their own lines. Semicolons inside `[]` stay put, so `[1, 2; 3, 4]` remains one matrix. **Lint** under the editor reports syntax errors, more than one command on a line, tabs, trailing whitespace, and `break` / `continue` outside a loop. A missing `;` is not an error. The line runs and its result is printed.
 
-**Run** führt das Skript aus und hält an Breakpoints an. **Step** startet an der ersten Anweisung und geht danach eine Anweisung weiter, auch in Schleifen und Funktionen. Die aktuelle Zeile ist markiert, der Workspace zeigt die Variablen bis dahin. **Stop** bricht ab und behält die schon gesetzten Variablen. Während einer Sitzung ist der Editor gesperrt.
+**Run** executes the script and stops at breakpoints. **Step** starts at the first statement and then advances one statement, including inside loops and functions. The current line is highlighted and the workspace shows the variables computed so far. **Stop** aborts and keeps the variables already set. The editor is locked during a session.
 
-**Workspace** zeigt nach dem Lauf Name, Value, Size und Class. Skalare stehen als Zahl. Kleine Matrizen stehen in der Value-Spalte wie ein MATLAB-Literal: Elemente mit `,`, Zeilen mit `;`, zum Beispiel `[2,4,8]` und `[2,4,8;4,8,16;6,12,24]`. Größere Matrizen bleiben leer, bis man sie per Doppelklick öffnet. Ein Doppelklick öffnet die Variable als Tabelle, auch für `fi`, Cells und Structs. Konstanten wie `pi` und `i` werden nicht gelistet.
+**Workspace** shows Name, Value, Size, and Class after a run. Scalars appear as numbers. Small matrices appear in the Value column as a MATLAB literal: elements separated by `,`, rows by `;`, for example `[2,4,8]` and `[2,4,8;4,8,16;6,12,24]`. Larger matrices stay blank until you double-click them. A double-click opens the variable as a table, including `fi`, cells, and structs. Constants such as `pi` and `i` are not listed.
 
-Plots aus `plot`, `stem`, `step` und `bode` erscheinen unter der Konsole.
+## Language
 
-## Sprache
-
-- Ausdrücke, Zuweisungen, `ans`, Ausgabeunterdrückung mit `;`
-- Matrixliterale: `[1 -2]` ist zwei Elemente, `[1 - 2]` und `[1-2]` sind Subtraktion
-- 1-basierte Indizes, `end`, `:`
+- Expressions, assignments, `ans`, output suppression with `;`
+- Matrix literals: `[1 -2]` is two elements, `[1 - 2]` and `[1-2]` are subtraction
+- 1-based indexing, `end`, `:`
 - `if` / `elseif` / `else`, `for`, `while`, `switch` / `case` / `otherwise`
-- `function`-Dateien und anonyme Funktionen `@(x) x+1`
-- Kommentare `%` und `%{ %}`, Zeilenfortsetzung `...`
-- Werte: reelle und komplexe Matrizen (spaltenweise), Zeichenketten, logische Werte, Cells, Structs, Function-Handles, `fi`, `tf` / `ss`
+- `function` files and anonymous functions `@(x) x+1`
+- Comments `%` and `%{ %}`, line continuation `...`
+- Values: real and complex matrices (column-major), strings, logicals, cells, structs, function handles, `fi`, `tf` / `ss`
 
-## Funktionen
+## Functions
 
-Lineare Algebra und Basisfunktionen: `zeros`, `ones`, `eye`, `size`, `length`, `numel`, `ndims`, `isempty`, `diag`, `linspace`, `reshape`, `sum`, `mean`, `min`, `max`, `inv`, `det`, `eig`, `svd`, `\`, `/`, `rand`, `randn`, `rng`, `abs`, `sqrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log10`, `floor`, `ceil`, `round`, `sign`, `real`, `imag`, `conj`, `transpose`, `ctranspose`, `disp`, `fprintf`, `sprintf`, `clear`, `home`.
+Linear algebra and basics: `zeros`, `ones`, `eye`, `size`, `length`, `numel`, `ndims`, `isempty`, `diag`, `linspace`, `reshape`, `sum`, `mean`, `min`, `max`, `inv`, `det`, `eig`, `svd`, `\`, `/`, `rand`, `randn`, `rng`, `abs`, `sqrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log10`, `floor`, `ceil`, `round`, `sign`, `real`, `imag`, `conj`, `transpose`, `ctranspose`, `disp`, `fprintf`, `sprintf`, `clear`, `home`.
 
-`clear` entfernt Variablen aus dem Workspace. `clear name` entfernt einen Namen, `clear` und `clear all` leeren den Workspace. `pi`, `i`, `j`, `inf`, `nan`, `true` und `false` bleiben erhalten. `home` löscht die bisherige Konsolenausgabe; Text nach `home` bleibt sichtbar. Beide Funktionen gehen auch ohne Klammern: `clear x` und `home`.
+`clear` removes variables from the workspace. `clear name` removes one name. `clear` and `clear all` empty the workspace. `pi`, `i`, `j`, `inf`, `nan`, `true`, and `false` stay. `home` clears the console output so far; text after `home` remains. Both work without parentheses: `clear x` and `home`.
 
-Plots: `plot`, `stem`, `figure`, `clf`, `close`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. `clf` und `clf reset` leeren die aktuelle Figure. `close`, `close(n)` und `close all` schließen Figures. Die GUI öffnet für jede Figure mit Inhalt ein eigenes Fenster, das sich auf den Desktop schieben lässt. Das Schließen-Kreuz macht dasselbe wie `close(n)`. Der Projekt-Default ist `docked`: `set(0, 'DefaultFigureWindowStyle', 'docked')`. Danach erzeugte Figures erscheinen als Tabs in einem gemeinsamen Fenster. `set(0, 'DefaultFigureWindowStyle', 'normal')` legt sie als eigene Fenster an. Das gilt für Figures, die nach dem `set` entstehen. Eine Figure, die schon Kurven hat, behält ihre bisherige Darstellung. Unter **Options** wählt **Reuse Figure** die aktuelle Figure; **New Figure** öffnet vor `plot`, `stem`, `step` und `bode` eine neue Figure, wenn die aktuelle schon Kurven hat und `hold` aus ist. `figure(n)` wählt in beiden Modi diese Figure. Die CLI behält die Daten und bricht nicht ab.
+Plots: `plot`, `stem`, `figure`, `clf`, `close`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. `clf` and `clf reset` clear the current figure. `close`, `close(n)`, and `close all` close figures. The GUI opens a separate window for every figure that has content. You can drag that window onto the desktop. The close button does the same as `close(n)`. The project default is `docked`: `set(0, 'DefaultFigureWindowStyle', 'docked')`. Figures created after that appear as tabs in one shared window. `set(0, 'DefaultFigureWindowStyle', 'normal')` opens them as separate windows. This applies to figures created after the `set`. A figure that already has curves keeps its current presentation. Under **Options**, **Reuse Figure** draws into the current figure. **New Figure** opens a new figure before `plot`, `stem`, `step`, and `bode` when the current figure already has curves and `hold` is off. `figure(n)` selects that figure in both modes. The CLI keeps the data and does not abort.
 
-Signalverarbeitung: `fft`, `ifft`, `filter`, `conv`, `freqz`, `butter`, `fir1`. `butter` benutzt die bilineare Transformation mit Vorverzerrung. `wn = 1` ist die Nyquist-Frequenz. Aufruf: `[b, a] = butter(n, wn)`.
+Signal processing: `fft`, `ifft`, `filter`, `conv`, `freqz`, `butter`, `fir1`. `butter` uses the bilinear transform with prewarping. `wn = 1` is the Nyquist frequency. Call: `[b, a] = butter(n, wn)`.
 
-Regelungstechnik: `tf`, `ss`, `step`, `bode`, `pole`. `step` integriert die Regelungsnormalform mit RK4.
+Control: `tf`, `ss`, `step`, `bode`, `pole`. `step` integrates controllable canonical form with RK4.
 
-Fixed-Point: `fi(wert, signed, wortbreite, nachkommastellen)`, `fi2hex`, `fi_write(x, 'datei.txt')`, `double`. Rundung ist kaufmännisch, Überlauf sättigt. `fi_write` schreibt ein Hex-Wort pro Zeile, spaltenweise, für VHDL-Testbenches.
+Fixed-point: `fi(value, signed, word length, fraction length)`, `fi2hex`, `fi_write(x, 'file.txt')`, `double`. Rounding is half away from zero. Overflow saturates. `fi_write` writes one hex word per line, column-major, for VHDL testbenches.
 
 ## HIL
 
@@ -76,29 +74,29 @@ v = hil.regread(h, 0);
 hil.close(h);
 ```
 
-Rahmen: Magic `OMAT`, Version, Opcode, Adresse, Länge, Nutzdaten, CRC-32. Opcodes: Write=1, Read=2, RegWrite=3, RegRead=4, Ack=5, Err=6. Abtastwerte sind little-endian `f64`.
+Frame: magic `OMAT`, version, opcode, address, length, payload, CRC-32. Opcodes: Write=1, Read=2, RegWrite=3, RegRead=4, Ack=5, Err=6. Samples are little-endian `f64`.
 
-Board-Profile liegen in `boards/`. `boards/pynq_rfsoc4x2.toml` beschreibt das PYNQ RFSoC 4x2 (XCZU48DR). `boards/explorer.toml` ist nur das Format für das FPGA-Horizons-Explorer-Board (Frühjahr 2027). Ein neues Board ist eine weitere TOML-Datei, kein Codewechsel. `OPENMAT_BOARDS` zeigt auf ein anderes Verzeichnis.
+Board profiles live in `boards/`. `boards/pynq_rfsoc4x2.toml` describes the PYNQ RFSoC 4x2 (XCZU48DR). `boards/explorer.toml` is only the format for the FPGA Horizons Explorer board (spring 2027). A new board is another TOML file, not a code change. `OPENMAT_BOARDS` points at another directory.
 
 ### PYNQ RFSoC 4x2
 
-1. `openmat-agent` für `aarch64-unknown-linux-gnu` bauen und auf das Board kopieren. Unter Windows dient Zig als Linker, weil `aarch64-unknown-linux-gnu` ein Linux-`cc` erwartet.
-2. Auf dem Board: `./openmat-agent --proto udp --bind 0.0.0.0:5000`. Die Meldung `listening on 0.0.0.0:5000 (udp)` heißt, dass der Agent bereit ist.
-3. `hil.open('udp', host, port)` nimmt Host und Port aus dem Aufruf, nicht aus `ethernet.host` im Board-Profil. `examples/hil.m` spricht `192.168.178.98` Port 5000 an; die Adresse im Skript ist die des Boards. `fprintf` gibt `v` und `y` aus.
-4. Der mitgelieferte Agent hält Register und Samples im Speicher. Die VHDL-Quellen unter `hdl/` (`openmat_axi_regs`, `openmat_fifo`, `openmat_packet`) sind der PL-Gegenpart: AXI-Registerbank, FIFO und Frame-Parser. Die Adressen 0, 4, 8 und 12 sind Scratch, Länge, Status und Control.
+1. Build `openmat-agent` for `aarch64-unknown-linux-gnu` and copy it to the board. On Windows, Zig is the linker, because `aarch64-unknown-linux-gnu` expects a Linux `cc`.
+2. On the board: `./openmat-agent --proto udp --bind 0.0.0.0:5000`. The message `listening on 0.0.0.0:5000 (udp)` means the agent is ready.
+3. `hil.open('udp', host, port)` takes the host and port from the call, not from `ethernet.host` in the board profile. `examples/hil.m` talks to `192.168.178.98` port 5000. The address in the script is the board's address. `fprintf` prints `v` and `y`.
+4. The supplied agent keeps registers and samples in memory. The VHDL sources under `hdl/` (`openmat_axi_regs`, `openmat_fifo`, `openmat_packet`) are the PL counterpart: AXI register bank, FIFO, and frame parser. Addresses 0, 4, 8, and 12 are scratch, length, status, and control.
 
-JTAG nutzt Vivado im Batch-Modus und JTAG-to-AXI. `OPENMAT_VIVADO` zeigt auf die `vivado`-Datei. Ohne Vivado bricht `hil.open('jtag', ...)` mit einer klaren Meldung ab. `hil.open('jtag-mock', 'pynq_rfsoc4x2')` prüft das Profil ohne Hardware. Sample-Ströme laufen über Ethernet, Registerzugriffe über Ethernet oder JTAG.
+JTAG uses Vivado in batch mode and JTAG-to-AXI. `OPENMAT_VIVADO` points at the `vivado` executable. Without Vivado, `hil.open('jtag', ...)` fails with a clear message. `hil.open('jtag-mock', 'pynq_rfsoc4x2')` checks the profile without hardware. Sample streams use Ethernet. Register access uses Ethernet or JTAG.
 
-Der Loopback-Transport und die Protokolltests laufen ohne Board: `cargo run -p openmat-cli -- examples/hil_loopback.m`. Gegen das Board: `cargo run -p openmat-cli -- examples/hil.m`, während der Agent auf UDP-Port 5000 lauscht.
+The loopback transport and the protocol tests run without a board: `cargo run -p openmat-cli -- examples/hil_loopback.m`. Against the board: `cargo run -p openmat-cli -- examples/hil.m`, while the agent listens on UDP port 5000.
 
-## Beispiele
+## Examples
 
-Jedes Skript beginnt mit `clear` und `home`.
+Every script starts with `clear` and `home`.
 
 - `examples/linalg.m`
-- `examples/plot_sine.m` zeichnet Sinus und Kosinus in zwei gedockte Figures
+- `examples/plot_sine.m` draws sine and cosine in two docked figures
 - `examples/dsp_demo.m`
 - `examples/fixed_point.m`
-- `examples/matrix_demo.m` zeigt `clear`, `home` und `a .* b` für eine Zeile und eine Spalte
+- `examples/matrix_demo.m` shows `clear`, `home`, and `a .* b` for a row and a column
 - `examples/hil_loopback.m`
 - `examples/hil.m`

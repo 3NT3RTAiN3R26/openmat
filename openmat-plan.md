@@ -1,63 +1,63 @@
-# MATLAB-kompatibler Interpreter in Rust ("openmat")
+# MATLAB-compatible interpreter in Rust ("openmat")
 
-Ein eigener, kostenloser Interpreter für MATLAB-`.m`-Dateien in reinem Rust (kein Python, kein Octave) mit CLI und nativer GUI, Signalverarbeitung, Regelungstechnik, Fixed-Point und einer HIL-Schnittstelle zum FPGA. Der Funktionsumfang wächst schrittweise. Ein vollständiger MATLAB-Ersatz ist es nicht.
+A free interpreter for MATLAB `.m` files in pure Rust (no Python, no Octave), with a CLI and a native GUI, signal processing, control systems, fixed-point, and an HIL interface to an FPGA. The feature set grows in steps. It is not a complete MATLAB replacement.
 
-## Ziel und Abgrenzung
+## Goal and scope
 
-- Echte `.m`-Skripte und -Funktionen ausführen, ohne Octave und ohne Python. Parser und Interpreter sind komplett in Rust geschrieben.
-- Schwerpunkte: Matrixrechnung, Plots, Signalverarbeitung, Regelungstechnik, Fixed-Point, HIL mit dem FPGA.
-- Nicht enthalten: Simulink, proprietäre Toolboxen und 100 % Kompatibilität. Die Liste unterstützter Funktionen bleibt eine Teilmenge.
-- In Rust gibt es kein fertiges SciPy. Filterentwurf (`butter`, `fir1`), Regelungstechnik (`tf`, `ss`, `bode`) und Ähnliches werden selbst auf Basis kleinerer Crates geschrieben.
+- Run real `.m` scripts and functions, without Octave and without Python. The parser and interpreter are written entirely in Rust.
+- Focus: matrix math, plots, signal processing, control systems, fixed-point, and HIL with an FPGA.
+- Not included: Simulink, proprietary toolboxes, and 100% compatibility. The list of supported functions stays a subset.
+- Rust has no ready-made SciPy. Filter design (`butter`, `fir1`), control (`tf`, `ss`, `bode`), and similar pieces are written in-house on top of smaller crates.
 
-## Architektur
+## Architecture
 
 ```mermaid
 flowchart LR
-    mFile[".m Datei / Konsole"] --> lexer[Lexer + Parser]
+    mFile[".m file / console"] --> lexer[Lexer + parser]
     lexer --> ast[AST]
     ast --> interp[Interpreter]
     interp --> lib["Builtins: nalgebra, rustfft"]
-    interp --> plot[Plot Backend egui_plot]
-    interp --> hil["HIL Modul"]
-    hil --> eth["Ethernet UDP/TCP"] --> agent["openmat-agent (ARM Linux)"] --> fpga[FPGA Board]
+    interp --> plot[Plot backend egui_plot]
+    interp --> hil["HIL module"]
+    hil --> eth["Ethernet UDP/TCP"] --> agent["openmat-agent (ARM Linux)"] --> fpga[FPGA board]
     hil --> jtag["JTAG (hw_server / Vivado Tcl)"] --> fpga
     cli[CLI] --> interp
     gui["GUI (eframe/egui)"] --> interp
 ```
 
-Cargo-Workspace mit getrennten Crates:
+Cargo workspace with separate crates:
 
-- `openmat-core`: Lexer, Parser (handgeschrieben, Pratt-Parser), AST, Werte-Typen, Interpreter.
-- `openmat-lib`: Builtins für lineare Algebra, DSP, Regelungstechnik, Fixed-Point.
-- `openmat-hil`: Transport-Trait mit Ethernet-, JTAG- und Loopback-Backend, Rahmenprotokoll und Board-Profile.
-- `openmat-agent`: kleiner Rust-Dienst für das ARM-Linux des PYNQ-Boards (aarch64), Zugriff auf AXI-Register und DMA.
-- `openmat-cli`: Binärprogramm `openmat script.m`, REPL über `rustyline`.
-- `openmat-gui`: Desktop-GUI mit `eframe`/`egui` und `egui_plot`.
+- `openmat-core`: lexer, parser (handwritten Pratt parser), AST, value types, interpreter.
+- `openmat-lib`: builtins for linear algebra, DSP, control, and fixed-point.
+- `openmat-hil`: transport trait with Ethernet, JTAG, and loopback backends, frame protocol, and board profiles.
+- `openmat-agent`: small Rust service for the PYNQ board's ARM Linux (aarch64), access to AXI registers and DMA.
+- `openmat-cli`: binary `openmat script.m`, REPL via `rustyline`.
+- `openmat-gui`: desktop GUI with `eframe`/`egui` and `egui_plot`.
 
-Gewählte Crates: `nalgebra` (Matrizen, `eig`, `svd`, `inv`, `\`), `num-complex`, `rustfft`, `clap`, `rustyline`, `thiserror`.
+Chosen crates: `nalgebra` (matrices, `eig`, `svd`, `inv`, `\`), `num-complex`, `rustfft`, `clap`, `rustyline`, `thiserror`.
 
-Datenmodell: `Value`-Enum mit 2D-Matrix (reell und komplex, spaltenmajor), String, Bool/Logical, Cell-Array, Struct, Function-Handle. Alles ist mindestens 2D, Indizes sind 1-basiert.
+Data model: `Value` enum with a 2D matrix (real and complex, column-major), string, bool/logical, cell array, struct, and function handle. Everything is at least 2D. Indexes are 1-based.
 
-MATLAB-Eigenheiten, die der Parser beachten muss: Transpose `'` gegen String, Matrixliterale mit Leerzeichen als Trenner (`[1 -2]` gegen `[1 - 2]`), `end` im Index, Kommentare `%` und Blockkommentare, Zeilenfortsetzung `...`, Ausgabe-Unterdrückung durch `;`.
+MATLAB quirks the parser has to handle: transpose `'` versus strings, matrix literals that use spaces as separators (`[1 -2]` versus `[1 - 2]`), `end` in an index, comments `%` and block comments, line continuation `...`, and output suppression with `;`.
 
-## Schritte
+## Steps
 
-1. **Kern**: Parser und Interpreter für Ausdrücke, Variablen, Matrixliterale, Indizierung, Ranges, `if`/`for`/`while`/`switch`, `function`-Dateien, anonyme Funktionen, `disp`/`fprintf`. Builtins `zeros`, `ones`, `eye`, `size`, `inv`, `\`, `eig`, `svd` und weitere. CLI und REPL. Tests mit `cargo test`.
-2. **Plots und GUI**: `plot`, `figure`, `hold`, `xlabel`, `title`, `subplot`, `stem`. GUI mit Editor, Konsole, Workspace-Ansicht und Plot-Fenster.
-3. **Signalverarbeitung und Regelungstechnik**: `fft`/`ifft` (über `rustfft`), `filter`, `conv`, `freqz`, `butter`, `fir1`, `tf`, `ss`, `step`, `bode`, `pole`. Teile davon werden selbst implementiert.
-4. **Fixed-Point und FPGA-Modelle**: `fi`-ähnlicher Datentyp mit Wortbreite, Bruchteil, Rundung und Sättigung, bit-genau. Damit entstehen Referenzmodelle und Testvektor-Dateien für Vivado-Testbenches.
-5. **HIL mit dem FPGA (Ethernet und JTAG von Anfang an)**: MATLAB-sichtbare Builtins `hil.open`, `hil.write`, `hil.read`, `hil.close`, `hil.regwrite`, `hil.regread`. Der Transport ist über ein Rust-Trait austauschbar:
-   - **Ethernet (UDP/TCP)**: Rahmenprotokoll mit Header, Länge, Nutzdaten und CRC. Auf dem PYNQ RFSoC 4x2 läuft auf dem ARM-Linux ein kleiner Rust-Agent (`openmat-agent`). Er nimmt Pakete entgegen und schreibt oder liest AXI-Register und DMA-Puffer im PL.
-   - **JTAG**: Anbindung über Xilinx `hw_server` (TCP, Port 3121) beziehungsweise Vivado im Batch-Modus mit Tcl und JTAG-to-AXI.
-   - **Loopback-Mock**: für Tests ohne Hardware.
-   - VHDL-Gegenstücke (AXI-Register-Bank, FIFO, Paket-Handling).
-   - Board-Profile als Konfigurationsdatei (`boards/pynq_rfsoc4x2.toml`, später `boards/explorer.toml`).
-6. **Doku**: README mit Installation, Liste unterstützter Funktionen und Beispiel-`.m`-Skripten.
+1. **Core**: parser and interpreter for expressions, variables, matrix literals, indexing, ranges, `if`/`for`/`while`/`switch`, `function` files, anonymous functions, `disp`/`fprintf`. Builtins `zeros`, `ones`, `eye`, `size`, `inv`, `\`, `eig`, `svd`, and more. CLI and REPL. Tests with `cargo test`.
+2. **Plots and GUI**: `plot`, `figure`, `hold`, `xlabel`, `title`, `subplot`, `stem`. GUI with editor, console, workspace view, and plot windows.
+3. **Signal processing and control**: `fft`/`ifft` (via `rustfft`), `filter`, `conv`, `freqz`, `butter`, `fir1`, `tf`, `ss`, `step`, `bode`, `pole`. Parts of this are implemented in-house.
+4. **Fixed-point and FPGA models**: an `fi`-like type with word length, fraction length, rounding, and saturation, bit-accurate. That produces reference models and test-vector files for Vivado testbenches.
+5. **HIL with the FPGA (Ethernet and JTAG from the start)**: MATLAB-visible builtins `hil.open`, `hil.write`, `hil.read`, `hil.close`, `hil.regwrite`, `hil.regread`. The transport is swappable through a Rust trait:
+   - **Ethernet (UDP/TCP)**: frame protocol with header, length, payload, and CRC. On the PYNQ RFSoC 4x2, a small Rust agent (`openmat-agent`) runs on the ARM Linux. It receives packets and reads or writes AXI registers and DMA buffers in the PL.
+   - **JTAG**: connection through the Xilinx `hw_server` (TCP, port 3121), or Vivado in batch mode with Tcl and JTAG-to-AXI.
+   - **Loopback mock**: for tests without hardware.
+   - VHDL counterparts (AXI register bank, FIFO, packet handling).
+   - Board profiles as configuration files (`boards/pynq_rfsoc4x2.toml`, later `boards/explorer.toml`).
+6. **Docs**: README with installation, the list of supported functions, and example `.m` scripts.
 
-## Festgelegte Annahmen
+## Settled assumptions
 
-- Reines Rust, keine Python-Abhängigkeit. Die GUI ist eine native Desktop-App (egui).
-- HIL unterstützt Ethernet und JTAG. Erstes Board ist das PYNQ RFSoC 4x2, später das FPGA-Horizons-Explorer-Board.
-- Das Explorer-Board kommt erst im Frühjahr 2027. Bis dahin nur das Profilformat, Inhalte folgen mit Datenblatt oder Constraints.
-- Der Test am echten PYNQ-Board läuft beim Nutzer. Hier nur Loopback-Test, Protokolllogik und README-Anleitung.
-- Lizenz: Apache License 2.0. Hinweis: MATLAB ist eine Marke von MathWorks. openmat ist nicht mit MathWorks verbunden.
+- Pure Rust, no Python dependency. The GUI is a native desktop app (egui).
+- HIL supports Ethernet and JTAG. The first board is the PYNQ RFSoC 4x2. Later, the FPGA Horizons Explorer board.
+- The Explorer board arrives in spring 2027. Until then only the profile format exists. Contents follow with the datasheet or constraints.
+- The test on a real PYNQ board is run by the user. This repo covers the loopback test, the protocol logic, and the README instructions.
+- License: Apache License 2.0. Notice: MATLAB is a trademark of MathWorks. openmat is not affiliated with MathWorks.
