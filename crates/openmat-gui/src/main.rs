@@ -6,8 +6,8 @@ use std::time::{Duration, SystemTime};
 
 use eframe::egui;
 use openmat_lib::{
-    format_number, format_source, lint_source, DebugCtl, Diagnostic, FuncHandle, Matrix, Session,
-    Severity, Value,
+    command_is_complete, format_number, format_source, lint_source, DebugCtl, Diagnostic,
+    FuncHandle, Matrix, Session, Severity, Value,
 };
 
 const SAMPLE: &str = "t = linspace(0, 2*pi, 64);\ny = sin(t);\nplot(t, y);\ntitle('sine');\nxlabel('t');\n";
@@ -92,6 +92,10 @@ struct OpenmatApp {
     console_base: String,
     new_figure: bool,
     docked_tab: usize,
+    command: String,
+    command_pending: String,
+    command_history: Vec<String>,
+    command_history_pos: Option<usize>,
 }
 
 impl OpenmatApp {
@@ -114,6 +118,10 @@ impl OpenmatApp {
             console_base: String::new(),
             new_figure: false,
             docked_tab: 0,
+            command: String::new(),
+            command_pending: String::new(),
+            command_history: Vec::new(),
+            command_history_pos: None,
         };
         if let Some(arg) = std::env::args().nth(1) {
             app.load_path(PathBuf::from(arg));
@@ -175,6 +183,7 @@ impl eframe::App for OpenmatApp {
                 }
                 if ui.button("Clear console").clicked() {
                     self.console.clear();
+                    self.command_pending.clear();
                     self.status.clear();
                 }
                 ui.separator();
@@ -239,19 +248,7 @@ impl eframe::App for OpenmatApp {
                 ui.colored_label(egui::Color32::from_rgb(180, 40, 40), &self.status);
             }
             ui.separator();
-            ui.label("Console");
-            egui::ScrollArea::vertical()
-                .id_salt("console")
-                .max_height(120.0)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut self.console)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(6)
-                            .interactive(false)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                });
+            self.show_command_window(ui);
         });
 
         self.show_figure_windows(ctx);
@@ -799,6 +796,132 @@ impl OpenmatApp {
         }
         if let Some(path) = dialog.pick_file() {
             self.load_path(path);
+        }
+    }
+
+    fn show_command_window(&mut self, ui: &mut egui::Ui) {
+        ui.label("Command Window");
+        egui::ScrollArea::vertical()
+            .id_salt("console")
+            .stick_to_bottom(true)
+            .max_height(140.0)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.console)
+                        .id_salt("console-log")
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(6)
+                        .interactive(false)
+                        .font(egui::TextStyle::Monospace),
+                );
+            });
+        if self.debug_run.is_some() {
+            ui.weak("Stop the debugger to use the command window.");
+            return;
+        }
+        let prompt = if self.command_pending.is_empty() { ">>" } else { ".." };
+        let mut submit = false;
+        let mut older = false;
+        let mut newer = false;
+        ui.horizontal(|ui| {
+            ui.monospace(prompt);
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.command)
+                    .id_salt("command-line")
+                    .desired_width(f32::INFINITY)
+                    .font(egui::TextStyle::Monospace),
+            );
+            let enter = ui.input(|input| {
+                input.key_pressed(egui::Key::Enter) && !input.modifiers.shift
+            });
+            older = response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::ArrowUp));
+            newer = response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::ArrowDown));
+            submit = response.has_focus() && enter;
+        });
+        if older {
+            self.history_older();
+        } else if newer {
+            self.history_newer();
+        } else if submit {
+            self.submit_command();
+        }
+    }
+
+    fn submit_command(&mut self) {
+        let line = std::mem::take(&mut self.command);
+        let prompt = if self.command_pending.is_empty() { ">>" } else { ".." };
+        if !self.console.is_empty() && !self.console.ends_with('\n') {
+            self.console.push('\n');
+        }
+        self.console.push_str(&format!("{prompt} {line}\n"));
+        let full = if self.command_pending.is_empty() {
+            line
+        } else {
+            format!("{}\n{line}", self.command_pending)
+        };
+        if !command_is_complete(&full) {
+            self.command_pending = full;
+            return;
+        }
+        self.command_pending.clear();
+        if full.trim().is_empty() {
+            return;
+        }
+        self.command_history.push(full.clone());
+        self.command_history_pos = None;
+        self.session.new_figure_on_plot = self.new_figure;
+        self.session.output.clear();
+        match self.session.eval_source(&full) {
+            Ok(()) => self.append_command_output(),
+            Err(err) => {
+                self.append_command_output();
+                if !self.console.ends_with('\n') {
+                    self.console.push('\n');
+                }
+                self.console.push_str(&err.to_string());
+                self.console.push('\n');
+            }
+        }
+    }
+
+    fn append_command_output(&mut self) {
+        if self.session.output_homed {
+            self.console = self.session.output.clone();
+            return;
+        }
+        if self.session.output.is_empty() {
+            return;
+        }
+        self.console.push_str(&self.session.output);
+        if !self.session.output.ends_with('\n') {
+            self.console.push('\n');
+        }
+    }
+
+    fn history_older(&mut self) {
+        if self.command_history.is_empty() || !self.command_pending.is_empty() {
+            return;
+        }
+        let next = match self.command_history_pos {
+            None => self.command_history.len() - 1,
+            Some(0) => 0,
+            Some(index) => index - 1,
+        };
+        self.command_history_pos = Some(next);
+        self.command = self.command_history[next].clone();
+    }
+
+    fn history_newer(&mut self) {
+        let Some(index) = self.command_history_pos else {
+            return;
+        };
+        if index + 1 >= self.command_history.len() {
+            self.command_history_pos = None;
+            self.command.clear();
+        } else {
+            let next = index + 1;
+            self.command_history_pos = Some(next);
+            self.command = self.command_history[next].clone();
         }
     }
 

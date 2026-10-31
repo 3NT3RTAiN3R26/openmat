@@ -91,6 +91,140 @@ pub fn format_source(src: &str) -> String {
     out
 }
 
+/// A command-window line is complete when brackets, strings, and
+/// `if` / `for` / `while` / `switch` / `function` blocks are closed,
+/// and the last code line does not end with `...`.
+pub fn command_is_complete(src: &str) -> bool {
+    if ends_with_continuation(src) {
+        return false;
+    }
+    let mut paren = 0i32;
+    let mut bracket = 0i32;
+    let mut brace = 0i32;
+    let mut block = 0i32;
+    let mut quote = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+    let mut at_statement = true;
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if block_comment {
+            if c == '%' && i + 1 < bytes.len() && bytes[i + 1] == b'}' {
+                block_comment = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if line_comment {
+            if c == '\n' {
+                line_comment = false;
+                at_statement = true;
+            }
+            i += 1;
+            continue;
+        }
+        if quote {
+            if c == '\'' {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                quote = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '\'' => {
+                quote = true;
+                at_statement = false;
+            }
+            '%' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                    block_comment = true;
+                    i += 2;
+                    continue;
+                }
+                line_comment = true;
+            }
+            '(' => {
+                paren += 1;
+                at_statement = false;
+            }
+            ')' => {
+                paren -= 1;
+                at_statement = false;
+            }
+            '[' => {
+                bracket += 1;
+                at_statement = false;
+            }
+            ']' => {
+                bracket -= 1;
+                at_statement = false;
+            }
+            '{' => {
+                brace += 1;
+                at_statement = false;
+            }
+            '}' => {
+                brace -= 1;
+                at_statement = false;
+            }
+            '\n' | ';' => at_statement = true,
+            c if c.is_whitespace() => {}
+            _ => {
+                if at_statement && paren <= 0 && bracket <= 0 && brace <= 0 {
+                    match keyword_at(src, i) {
+                        Some("if" | "for" | "while" | "switch" | "function" | "try" | "classdef") => {
+                            block += 1;
+                        }
+                        Some("end") => block -= 1,
+                        _ => {}
+                    }
+                }
+                at_statement = false;
+            }
+        }
+        i += 1;
+    }
+    paren <= 0 && bracket <= 0 && brace <= 0 && block <= 0 && !quote && !block_comment
+}
+
+fn ends_with_continuation(src: &str) -> bool {
+    src.lines().rev().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('%') {
+            None
+        } else {
+            Some(trimmed.ends_with("..."))
+        }
+    }).unwrap_or(false)
+}
+
+fn keyword_at(src: &str, index: usize) -> Option<&str> {
+    let rest = src.get(index..)?;
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    let word = &rest[..end];
+    let after = index + end;
+    if after < src.len() {
+        let next = src[after..].chars().next()?;
+        if next.is_ascii_alphanumeric() || next == '_' {
+            return None;
+        }
+    }
+    Some(word)
+}
+
 pub fn lint_source(src: &str) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for (index, line) in split_lines(src).into_iter().enumerate() {
@@ -286,6 +420,17 @@ mod tests {
         assert!(diagnostics
             .iter()
             .all(|d| !d.message.contains("semicolon")));
+    }
+
+    #[test]
+    fn command_window_waits_for_blocks_and_brackets() {
+        assert!(command_is_complete("a = 1"));
+        assert!(!command_is_complete("if a"));
+        assert!(command_is_complete("if a\nb = 1;\nend"));
+        assert!(!command_is_complete("x = [1 2"));
+        assert!(command_is_complete("x = [1 2]"));
+        assert!(!command_is_complete("y = 1 + ..."));
+        assert!(!command_is_complete("function y = add(a, b)"));
     }
 
     #[test]

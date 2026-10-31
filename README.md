@@ -26,7 +26,9 @@ Without a file, `openmat` starts a REPL when the terminal is interactive. Otherw
 
 ## GUI
 
-The desktop window has the file browser on the left, the editor, console, and status in the center, and the workspace on the right. Figures with content open in their own windows.
+The desktop window has the file browser on the left, the editor, command window, and status in the center, and the workspace on the right. Figures with content open in their own windows.
+
+The command window shows a `>>` prompt. Enter runs that line in the same session as **Run**, so variables and figures stay. An open `if`, `for`, `while`, `switch`, `function`, bracket, or a line ending in `...` waits for more input (`..`). Errors are printed and the session continues. Arrow up and arrow down walk through previous commands. `clear`, `home`, and `close` affect this session. The prompt is disabled while the debugger is running.
 
 **Files** lists the current folder with Name, Size, Date Modified, and Type. Click a column header to sort. **Up** or a double-click on `..` goes up one level. Double-click a folder to open it. Double-click a `.m` file to load it into the editor. **Open…** and Ctrl+O open the file dialog. **Save** and Ctrl+S write the file. If there is no path yet, a dialog asks for the name. A file can also be dropped onto the window.
 
