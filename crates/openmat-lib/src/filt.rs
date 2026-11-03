@@ -4,7 +4,7 @@ use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
 use openmat_core::{MatError, MatResult, Matrix, Session, Value};
 
-use crate::sigproc::{coefficient_row, default_dim, poly_from_roots, polynomial_roots, xcorr};
+use crate::sigproc::{coefficient_row, conjugate_closed, default_dim, poly_from_roots, polynomial_roots, xcorr};
 use crate::util::{col, matrix_arg, need, positive, real_scalar, row};
 
 pub fn register(session: &mut Session) {
@@ -287,10 +287,15 @@ fn zp2tf(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let gain = real_scalar(args, 2)?;
     let b: Vec<Complex64> = poly_from_roots(&zeros).into_iter().map(|c| c * gain).collect();
     let a = poly_from_roots(&poles);
+    // MATLAB pads a shorter numerator with leading zeros to the length of the denominator.
+    let mut padded = vec![Complex64::new(0.0, 0.0); a.len().saturating_sub(b.len())];
+    padded.extend(b);
+    let b = coefficient_row(padded, conjugate_closed(&zeros));
+    let a = coefficient_row(a, conjugate_closed(&poles));
     if session.nargout >= 2 {
-        Ok(Value::Multi(vec![coefficient_row(b), coefficient_row(a)]))
+        Ok(Value::Multi(vec![b, a]))
     } else {
-        Ok(coefficient_row(b))
+        Ok(b)
     }
 }
 
@@ -307,6 +312,9 @@ fn tf2zp(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
     let b = coefficients(args, 0)?;
     let a = coefficients(args, 1)?;
+    if b.len() > a.len() {
+        return Err(MatError::new("Transfer function not proper."));
+    }
     let first = |p: &[f64]| p.iter().copied().find(|c| *c != 0.0);
     let Some(a0) = first(&a) else {
         return Err(MatError::new("tf2zp denominator must not be zero"));

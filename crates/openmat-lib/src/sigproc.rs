@@ -190,15 +190,28 @@ fn nextpow2(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     Ok(Value::Matrix(m.map(|z| {
         let magnitude = z.norm();
-        Complex64::from(if magnitude == 0.0 { 0.0 } else { magnitude.log2().ceil() })
+        Complex64::from(if magnitude == 0.0 {
+            0.0
+        } else {
+            let exponent = magnitude.log2().ceil();
+            if exponent.exp2() < magnitude {
+                exponent + 1.0
+            } else {
+                exponent
+            }
+        })
     })))
 }
 
 fn sinc(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     Ok(Value::Matrix(m.map(|z| {
-        let x = z.re;
-        Complex64::from(if x == 0.0 { 1.0 } else { (PI * x).sin() / (PI * x) })
+        if z == Complex64::new(0.0, 0.0) {
+            Complex64::new(1.0, 0.0)
+        } else {
+            let x = z * PI;
+            x.sin() / x
+        }
     })))
 }
 
@@ -233,13 +246,14 @@ fn dim_arg(args: &[Value], index: usize, m: &Matrix) -> MatResult<usize> {
 fn along(
     m: &Matrix,
     dim: usize,
+    empty_rows: usize,
     f: impl Fn(&[Complex64]) -> Vec<Complex64>,
 ) -> MatResult<Matrix> {
     if dim == 2 {
-        return Ok(along(&m.transpose(false), 1, f)?.transpose(false));
+        return Ok(along(&m.transpose(false), 1, empty_rows, f)?.transpose(false));
     }
     let mut data = Vec::new();
-    let mut rows = 0;
+    let mut rows = empty_rows;
     for c in 0..m.cols {
         let out = f(&m.data[c * m.rows..(c + 1) * m.rows]);
         rows = out.len();
@@ -256,7 +270,8 @@ fn along(
 fn cumsum(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     let dim = dim_arg(args, 1, &m)?;
-    Ok(Value::Matrix(along(&m, dim, |x| {
+    let rows = if dim == 1 { m.rows } else { m.cols };
+    Ok(Value::Matrix(along(&m, dim, rows, |x| {
         let mut total = Complex64::new(0.0, 0.0);
         x.iter()
             .map(|v| {
@@ -272,7 +287,10 @@ fn diff(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let order = if args.len() >= 2 { positive(real_scalar(args, 1)?)? } else { 1 };
     let dim = dim_arg(args, 2, &m)?;
     for _ in 0..order {
-        m = along(&m, dim, |x| x.windows(2).map(|w| w[1] - w[0]).collect())?;
+        let rows = if dim == 1 { m.rows } else { m.cols }.saturating_sub(1);
+        m = along(&m, dim, rows, |x| {
+            x.windows(2).map(|w| w[1] - w[0]).collect()
+        })?;
     }
     Ok(Value::Matrix(m))
 }
@@ -337,7 +355,8 @@ fn unwrap(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     let cutoff = if args.len() >= 2 { real_scalar(args, 1)? } else { PI };
     let dim = dim_arg(args, 2, &m)?;
-    Ok(Value::Matrix(along(&m, dim, |x| {
+    let rows = if dim == 1 { m.rows } else { m.cols };
+    Ok(Value::Matrix(along(&m, dim, rows, |x| {
         let reals: Vec<f64> = x.iter().map(|z| z.re).collect();
         unwrap_reals(&reals, cutoff)
             .into_iter()
@@ -396,7 +415,7 @@ fn poly(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     } else {
         return Err(MatError::new("poly needs a vector or a square matrix"));
     };
-    Ok(coefficient_row(poly_from_roots(&zeros)))
+    Ok(coefficient_row(poly_from_roots(&zeros), conjugate_closed(&zeros)))
 }
 
 /// Coefficients, highest power first, of the monic polynomial with the given roots.
@@ -413,10 +432,27 @@ pub(crate) fn poly_from_roots(zeros: &[Complex64]) -> Vec<Complex64> {
     coeff
 }
 
-/// A row vector that is real when the imaginary parts are rounding noise.
-pub(crate) fn coefficient_row(coeff: Vec<Complex64>) -> Value {
-    let scale = coeff.iter().map(|c| c.norm()).fold(1.0, f64::max);
-    if coeff.iter().all(|c| c.im.abs() <= 1e-10 * scale) {
+/// True when every non-real root has its complex conjugate among the roots.
+pub(crate) fn conjugate_closed(roots: &[Complex64]) -> bool {
+    let mut unmatched: Vec<Complex64> = roots.iter().copied().filter(|r| r.im != 0.0).collect();
+    while let Some(root) = unmatched.pop() {
+        let close = |other: &Complex64| {
+            let tolerance = 1e-9 * (1.0 + root.norm());
+            (other.re - root.re).abs() <= tolerance && (other.im + root.im).abs() <= tolerance
+        };
+        match unmatched.iter().position(close) {
+            Some(partner) => {
+                unmatched.swap_remove(partner);
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
+/// A row vector of the coefficients. `real` drops the imaginary parts, which are then rounding noise.
+pub(crate) fn coefficient_row(coeff: Vec<Complex64>, real: bool) -> Value {
+    if real {
         return row(coeff.iter().map(|c| c.re).collect());
     }
     Value::Matrix(Matrix {
@@ -497,7 +533,8 @@ fn analytic_signal(x: &[Complex64]) -> Vec<Complex64> {
 fn hilbert(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     let dim = default_dim(&m);
-    Ok(Value::Matrix(along(&m, dim, analytic_signal)?))
+    let rows = if dim == 1 { m.rows } else { m.cols };
+    Ok(Value::Matrix(along(&m, dim, rows, analytic_signal)?))
 }
 
 fn detrend_reals(y: &[f64], order: usize) -> MatResult<Vec<f64>> {
@@ -538,7 +575,8 @@ fn detrend(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         Some(value) => positive(value.real_scalar()?)?,
     };
     let dim = default_dim(&m);
-    let result = along(&m, dim, |x| {
+    let rows = if dim == 1 { m.rows } else { m.cols };
+    let result = along(&m, dim, rows, |x| {
         let re: Vec<f64> = x.iter().map(|z| z.re).collect();
         let im: Vec<f64> = x.iter().map(|z| z.im).collect();
         match (detrend_reals(&re, order), detrend_reals(&im, order)) {
@@ -581,6 +619,9 @@ pub(crate) fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
             other => numeric.push(other),
         }
     }
+    if numeric.is_empty() {
+        return Err(MatError::new("xcorr needs a numeric input vector"));
+    }
     let x = numeric[0].clone().into_matrix()?;
     let (second, max_lag) = match numeric.len() {
         1 => (None, None),
@@ -611,7 +652,7 @@ pub(crate) fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         None => n.saturating_sub(1),
     };
     let energy = |v: &[Complex64]| v.iter().map(|z| z.norm_sqr()).sum::<f64>();
-    let coeff_norm = (energy(&xs) * energy(&ys)).sqrt();
+    let coeff_norm = energy(&xs).sqrt() * energy(&ys).sqrt();
     let mut values = Vec::with_capacity(2 * max_lag + 1);
     let mut lags = Vec::with_capacity(2 * max_lag + 1);
     for lag in -(max_lag as i64)..=(max_lag as i64) {
@@ -716,6 +757,26 @@ mod tests {
         assert_close(&reals("y = diff([1 4 9 16]);", "y"), &[3.0, 5.0, 7.0]);
         assert_close(&reals("y = diff([1 4 9 16], 2);", "y"), &[2.0, 2.0]);
         assert!(reals("y = diff(5);", "y").is_empty());
+    }
+
+    #[test]
+    fn signal_operations_preserve_empty_matrix_shapes() {
+        let session = exec(
+            "a = zeros(3, 0); c = cumsum(a); c2 = cumsum(a, 2); d = diff(a); d2 = diff(a, 1, 2); h = hilbert(a); u = unwrap(a); t = detrend(a);",
+        )
+        .unwrap();
+        for (name, shape) in [
+            ("c", (3, 0)),
+            ("c2", (3, 0)),
+            ("d", (2, 0)),
+            ("d2", (3, 0)),
+            ("h", (3, 0)),
+            ("u", (3, 0)),
+            ("t", (3, 0)),
+        ] {
+            let matrix = session.get(name).unwrap().clone().into_matrix().unwrap();
+            assert_eq!((matrix.rows, matrix.cols), shape, "{name}");
+        }
     }
 
     #[test]
