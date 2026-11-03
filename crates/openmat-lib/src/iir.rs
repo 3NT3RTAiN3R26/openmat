@@ -274,9 +274,10 @@ fn bilinear(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let num = matrix_arg(args, 0)?.reals()?;
     let den = matrix_arg(args, 1)?.reals()?;
     let first = |p: &[f64]| p.iter().copied().find(|c| *c != 0.0);
-    let (Some(num0), Some(den0)) = (first(&num), first(&den)) else {
-        return Err(MatError::new("bilinear needs a non-zero numerator and denominator"));
+    let Some(den0) = first(&den) else {
+        return Err(MatError::new("bilinear denominator must not be zero"));
     };
+    let num0 = first(&num).unwrap_or(0.0);
     let z = polynomial_roots(&num)?;
     let p = polynomial_roots(&den)?;
     if z.len() > p.len() {
