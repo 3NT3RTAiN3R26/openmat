@@ -392,7 +392,7 @@ fn impulse_length(b: &[f64], a: &[f64]) -> MatResult<usize> {
         .fold(0.0, f64::max);
     if radius > 0.0 && radius < 1.0 {
         let decay = (5e-5f64.ln() / radius.ln()).ceil() as usize;
-        Ok(decay.clamp(b.len(), 100_000))
+        Ok(decay.min(100_000).max(b.len()))
     } else if radius == 0.0 {
         Ok(b.len().max(trimmed))
     } else {
