@@ -607,6 +607,90 @@ mod tests {
     }
 
     #[test]
+    fn private_functions_are_visible_only_to_files_in_the_parent_folder() {
+        let one = temp_dir("priv_one");
+        let two = temp_dir("priv_two");
+        for (dir, caller, value) in [(&one, "caller_one", 5), (&two, "caller_two", 9)] {
+            fs::create_dir_all(dir.join("private")).unwrap();
+            fs::write(
+                dir.join(format!("{caller}.m")),
+                format!("function y = {caller}()\ny = secret() + sibling();\nend\n"),
+            )
+            .unwrap();
+            fs::write(
+                dir.join("private").join("secret.m"),
+                format!("function y = secret()\ny = {value};\nend\n"),
+            )
+            .unwrap();
+            fs::write(
+                dir.join("private").join("sibling.m"),
+                "function y = sibling()\ny = secret() * 0;\nend\n",
+            )
+            .unwrap();
+        }
+        let src = format!("addpath('{}'); addpath('{}'); a = caller_one(); b = caller_two(); c = caller_one();", lit(&one), lit(&two));
+        let session = exec(&src).unwrap();
+        let num = |name: &str| session.get(name).unwrap().real_scalar().unwrap();
+        assert_eq!((num("a"), num("b"), num("c")), (5.0, 9.0, 5.0));
+        let err = exec(&format!("addpath('{}'); secret();", lit(&one))).err().expect("error");
+        assert!(err.to_string().contains("undefined"), "{err}");
+        for dir in [one, two] {
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn private_function_wins_over_a_path_function_of_the_same_name() {
+        let pub_dir = temp_dir("priv_pub");
+        let dir = temp_dir("priv_win");
+        fs::create_dir_all(dir.join("private")).unwrap();
+        fs::write(pub_dir.join("pick.m"), "function y = pick()\ny = 1;\nend\n").unwrap();
+        fs::write(dir.join("private").join("pick.m"), "function y = pick()\ny = 2;\nend\n").unwrap();
+        fs::write(dir.join("use_pick.m"), "function y = use_pick()\ny = pick();\nend\n").unwrap();
+        let src = format!("addpath('{}'); addpath('{}'); inside = use_pick(); outside = pick();", lit(&pub_dir), lit(&dir));
+        let session = exec(&src).unwrap();
+        assert_eq!(session.get("inside").unwrap().real_scalar().unwrap(), 2.0);
+        assert_eq!(session.get("outside").unwrap().real_scalar().unwrap(), 1.0);
+        for dir in [pub_dir, dir] {
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn local_functions_of_different_files_do_not_collide() {
+        let dir = temp_dir("local");
+        fs::write(dir.join("first.m"), "function r = first()\nr = helper();\nend\nfunction y = helper()\ny = 1;\nend\n").unwrap();
+        fs::write(dir.join("second.m"), "function r = second()\nr = helper();\nend\nfunction y = helper()\ny = 2;\nend\n").unwrap();
+        let session = exec(&format!("addpath('{}'); a = first(); b = second(); c = first();", lit(&dir))).unwrap();
+        let num = |name: &str| session.get(name).unwrap().real_scalar().unwrap();
+        assert_eq!((num("a"), num("b"), num("c")), (1.0, 2.0, 1.0));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn package_functions_are_called_through_their_dotted_name() {
+        let dir = temp_dir("pkg");
+        fs::create_dir_all(dir.join("+pkg")).unwrap();
+        fs::create_dir_all(dir.join("+a").join("+b")).unwrap();
+        fs::write(dir.join("+pkg").join("twice.m"), "function y = twice(x)\ny = 2 * x;\nend\n").unwrap();
+        fs::write(dir.join("+a").join("+b").join("deep.m"), "function y = deep()\ny = 42;\nend\n").unwrap();
+        let session = exec(&format!(
+            "addpath('{}'); t = pkg.twice(4); d = a.b.deep(); e = a.b.deep; f = exist('pkg.twice');",
+            lit(&dir)
+        ))
+        .unwrap();
+        let num = |name: &str| session.get(name).unwrap().real_scalar().unwrap();
+        assert_eq!((num("t"), num("d"), num("e"), num("f")), (8.0, 42.0, 42.0, 2.0));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn struct_field_calls_are_not_treated_as_packages() {
+        let session = exec("s.data = [1 2 3]; v = s.data(2); w = s.data;").unwrap();
+        assert_eq!(session.get("v").unwrap().real_scalar().unwrap(), 2.0);
+    }
+
+    #[test]
     fn bare_function_names_are_called_not_turned_into_handles() {
         let session = exec("s = pathsep; f = filesep;").unwrap();
         assert!(matches!(session.get("s"), Some(openmat_core::Value::Char(_))));

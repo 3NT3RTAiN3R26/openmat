@@ -14,6 +14,26 @@ fn is_file_name(name: &str) -> bool {
         && chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
+/// Functions from files are stored under their file path. A local function of that file is `path#name`.
+fn file_key(file: &Path) -> String {
+    file.to_string_lossy().into_owned()
+}
+
+/// `a.b.fn` is the file `+a/+b/fn.m`. A plain name is `name.m`. None when a segment is not a valid name.
+fn relative_file(name: &str) -> Option<PathBuf> {
+    let parts: Vec<&str> = name.split('.').collect();
+    if !parts.iter().all(|part| is_file_name(part)) {
+        return None;
+    }
+    let (last, packages) = parts.split_last()?;
+    let mut file = PathBuf::new();
+    for package in packages {
+        file.push(format!("+{package}"));
+    }
+    file.push(format!("{last}.m"));
+    Some(file)
+}
+
 /// Where `savepath` writes the search path. `OPENMAT_PATHDEF` overrides the default location.
 pub fn pathdef_file() -> Option<PathBuf> {
     if let Some(file) = std::env::var_os("OPENMAT_PATHDEF") {
@@ -30,13 +50,14 @@ pub fn pathdef_file() -> Option<PathBuf> {
 }
 
 impl Session {
-    /// Forgets functions and scripts read from the search path so edited files load again.
+    /// Forgets functions and scripts read from files so edited files load again.
     pub fn unload_path_files(&mut self) {
-        for name in std::mem::take(&mut self.path_funcs) {
-            self.funcs.remove(&name);
+        for key in std::mem::take(&mut self.path_funcs) {
+            self.funcs.remove(&key);
         }
         self.path_scripts.clear();
         self.path_errors.clear();
+        self.path_lookup.clear();
     }
 
     pub fn search_path_text(&self) -> String {
@@ -86,57 +107,104 @@ impl Session {
         }
     }
 
-    fn find_on_path(&self, name: &str) -> Option<PathBuf> {
-        let file = format!("{name}.m");
+    /// The `.m` file `name` is in the current folder or on the path. `pkg.fn` looks for `+pkg/fn.m`.
+    pub fn which_file(&self, name: &str) -> Option<PathBuf> {
+        let relative = relative_file(name)?;
         std::env::current_dir()
             .ok()
             .into_iter()
             .chain(self.search_path.iter().cloned())
-            .map(|dir| dir.join(&file))
+            .map(|dir| dir.join(&relative))
             .find(|candidate| candidate.is_file())
     }
 
-    /// The `.m` file `name` resolves to in the current folder or on the path.
-    pub fn which_file(&self, name: &str) -> Option<PathBuf> {
+    /// The `private` folder whose functions the running file may call.
+    fn private_dir(&self) -> Option<PathBuf> {
+        let dir = self.current_file.as_ref()?.parent()?;
+        if dir.file_name().is_some_and(|name| name == "private") {
+            Some(dir.to_path_buf())
+        } else {
+            Some(dir.join("private"))
+        }
+    }
+
+    fn private_file(&mut self, name: &str) -> Option<PathBuf> {
         if !is_file_name(name) {
             return None;
         }
-        self.find_on_path(name)
+        let dir = self.private_dir()?;
+        let cache = format!("private\0{}\0{name}", dir.display());
+        if let Some(hit) = self.path_lookup.get(&cache) {
+            return hit.clone();
+        }
+        let file = dir.join(format!("{name}.m"));
+        let found = file.is_file().then_some(file);
+        self.path_lookup.insert(cache, found.clone());
+        found
     }
 
-    /// True when `name` is a builtin, a defined function, or an `.m` file in the current folder or on the path.
-    pub(crate) fn resolves(&mut self, name: &str) -> bool {
-        if self.builtins.contains_key(name)
-            || self.funcs.contains_key(name)
-            || self.path_scripts.contains_key(name)
-            || self.path_errors.contains_key(name)
-        {
-            return true;
+    fn public_file(&mut self, name: &str) -> Option<PathBuf> {
+        let cache = format!("path\0{name}");
+        if let Some(hit) = self.path_lookup.get(&cache) {
+            return hit.clone();
         }
-        let Some(file) = self.which_file(name) else {
-            return false;
-        };
-        let loaded = std::fs::read_to_string(&file)
+        let found = self.which_file(name);
+        self.path_lookup.insert(cache, found.clone());
+        found
+    }
+
+    /// Finds what `name` calls and returns the key to run it by: a function defined in the
+    /// script, a function local to the running file, a `private` function, a builtin, then
+    /// a file in the current folder, on the path, or in a `+package` folder.
+    pub(crate) fn resolve(&mut self, name: &str) -> Option<String> {
+        if let Some(file) = &self.current_file {
+            let local = format!("{}#{name}", file_key(file));
+            if self.funcs.contains_key(&local) {
+                return Some(local);
+            }
+        }
+        if self.funcs.contains_key(name) {
+            return Some(name.to_string());
+        }
+        if let Some(file) = self.private_file(name) {
+            return Some(self.ensure_loaded(&file));
+        }
+        if self.builtins.contains_key(name) {
+            return Some(name.to_string());
+        }
+        let file = self.public_file(name)?;
+        Some(self.ensure_loaded(&file))
+    }
+
+    fn ensure_loaded(&mut self, file: &Path) -> String {
+        let key = file_key(file);
+        if self.funcs.contains_key(&key)
+            || self.path_scripts.contains_key(&key)
+            || self.path_errors.contains_key(&key)
+        {
+            return key;
+        }
+        let loaded = std::fs::read_to_string(file)
             .map_err(|err| MatError::new(err.to_string()))
             .and_then(|src| parse(&src));
         match loaded {
-            Ok(program) => self.install_path_file(name, &file, program),
+            Ok(program) => self.install_file(&key, file, program),
             Err(err) => {
                 self.path_errors
-                    .insert(name.to_string(), format!("{}: {err}", file.display()));
+                    .insert(key.clone(), format!("{}: {err}", file.display()));
             }
         }
-        true
+        key
     }
 
-    fn install_path_file(&mut self, name: &str, file: &Path, program: Vec<Stmt>) {
+    fn install_file(&mut self, key: &str, file: &Path, program: Vec<Stmt>) {
         let is_function_file = matches!(
             program.first().map(|stmt| &stmt.kind),
             Some(StmtKind::Function { .. })
         );
         if !is_function_file {
             self.path_scripts
-                .insert(name.to_string(), (file.to_path_buf(), program));
+                .insert(key.to_string(), (file.to_path_buf(), program));
             return;
         }
         for (index, stmt) in program.iter().enumerate() {
@@ -148,9 +216,13 @@ impl Session {
             } = &stmt.kind
             {
                 // The file name wins over the declared name of the main function.
-                let key = if index == 0 { name } else { declared };
+                let entry = if index == 0 {
+                    key.to_string()
+                } else {
+                    format!("{key}#{declared}")
+                };
                 self.funcs.insert(
-                    key.to_string(),
+                    entry.clone(),
                     UserFunc {
                         params: params.clone(),
                         outputs: outputs.clone(),
@@ -158,17 +230,17 @@ impl Session {
                         file: Some(file.to_path_buf()),
                     },
                 );
-                self.path_funcs.push(key.to_string());
+                self.path_funcs.push(entry);
             }
         }
     }
 
-    /// Runs a script from the path, or reports why its file could not be loaded.
-    pub(crate) fn run_path_entry(&mut self, name: &str) -> Option<MatResult<Value>> {
-        if let Some(message) = self.path_errors.get(name) {
+    /// Runs a script by its key, or reports why its file could not be loaded.
+    pub(crate) fn run_path_entry(&mut self, key: &str) -> Option<MatResult<Value>> {
+        if let Some(message) = self.path_errors.get(key) {
             return Some(Err(MatError::new(message.clone())));
         }
-        let (file, program) = self.path_scripts.get(name)?.clone();
+        let (file, program) = self.path_scripts.get(key)?.clone();
         Some(self.run_program_from(&file, &program))
     }
 

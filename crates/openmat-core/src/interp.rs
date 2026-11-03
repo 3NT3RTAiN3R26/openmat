@@ -257,9 +257,11 @@ impl Session {
     }
 
     fn eval_statement_expr(&mut self, expr: &Expr) -> MatResult<(Value, bool)> {
-        if let Expr::Ident(name) = expr {
-            if self.get(name).is_none() && self.resolves(name) {
-                return Ok((self.call_named(name, &[])?, true));
+        if let Some((root, full)) = dotted_name(expr) {
+            if self.get(&root).is_none() {
+                if let Some(key) = self.resolve(&full) {
+                    return Ok((self.call_named(&key, &[])?, true));
+                }
             }
         }
         let invoked = matches!(expr, Expr::Call { .. });
@@ -275,13 +277,13 @@ impl Session {
                 if let Some(value) = self.get(name) {
                     return Ok(value.clone());
                 }
-                if self.resolves(name) {
+                if let Some(key) = self.resolve(name) {
                     // A bare namespace such as `hil` stays a handle so `hil.open` can qualify it.
                     let namespace = format!("{name}.");
                     if self.builtins.keys().any(|key| key.starts_with(&namespace)) {
                         return Ok(Value::Func(FuncHandle::Named(name.clone())));
                     }
-                    return self.call_named(name, &[]);
+                    return self.call_named(&key, &[]);
                 }
                 Err(MatError::new(format!("undefined variable '{name}'")))
             }
@@ -320,7 +322,14 @@ impl Session {
             Expr::Matrix { rows } => self.eval_matrix(rows),
             Expr::Cell { rows } => self.eval_cell(rows),
             Expr::Call { callee, args } => self.eval_call(callee, args),
-            Expr::Field { expr, field } => {
+            whole @ Expr::Field { expr, field } => {
+                if let Some((root, full)) = dotted_name(whole) {
+                    if self.get(&root).is_none() {
+                        if let Some(key) = self.resolve(&full) {
+                            return self.call_named(&key, &[]);
+                        }
+                    }
+                }
                 let base = self.eval(expr)?;
                 match base {
                     Value::Struct(map) => map
@@ -477,16 +486,10 @@ impl Session {
     }
 
     fn eval_call(&mut self, callee: &Expr, args: &[Expr]) -> MatResult<Value> {
-        if let Some(name) = callable_name(callee) {
-            if self.get(&name).is_none() && self.resolves(&name) {
-                return self.call_named(&name, args);
-            }
-        }
-        if let Expr::Field { expr, field } = callee {
-            if let Expr::Ident(name) = expr.as_ref() {
-                let qual = format!("{name}.{field}");
-                if self.resolves(&qual) {
-                    return self.call_named(&qual, args);
+        if let Some((root, full)) = dotted_name(callee) {
+            if self.get(&root).is_none() {
+                if let Some(key) = self.resolve(&full) {
+                    return self.call_named(&key, args);
                 }
             }
         }
@@ -540,6 +543,10 @@ impl Session {
     fn call_handle(&mut self, handle: FuncHandle, args: &[Value]) -> MatResult<Value> {
         match handle {
             FuncHandle::Named(name) => {
+                let key = self
+                    .resolve(&name)
+                    .ok_or_else(|| MatError::new(format!("undefined function '{name}'")))?;
+                let name = key;
                 if let Some(func) = self.builtins.get(&name).copied() {
                     return func(self, args);
                 }
@@ -715,13 +722,13 @@ impl Session {
     }
 }
 
-fn callable_name(expr: &Expr) -> Option<String> {
+fn dotted_name(expr: &Expr) -> Option<(String, String)> {
     match expr {
-        Expr::Ident(name) => Some(name.clone()),
-        Expr::Field { expr, field } => match expr.as_ref() {
-            Expr::Ident(name) => Some(format!("{name}.{field}")),
-            _ => None,
-        },
+        Expr::Ident(name) => Some((name.clone(), name.clone())),
+        Expr::Field { expr, field } => {
+            let (root, parent) = dotted_name(expr)?;
+            Some((root, format!("{parent}.{field}")))
+        }
         _ => None,
     }
 }
