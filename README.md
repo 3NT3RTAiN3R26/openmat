@@ -62,6 +62,29 @@ Control: `tf`, `ss`, `step`, `bode`, `pole`. `step` integrates controllable cano
 
 Fixed-point: `fi(value, signed, word length, fraction length)`, `fi2hex`, `fi_write(x, 'file.txt')`, `double`. Rounding is half away from zero. Overflow saturates. `fi_write` writes one hex word per line, column-major, for VHDL testbenches.
 
+## Search path
+
+A name that is not a variable or a function defined in the script is looked up as an `.m` file in the current folder and then in the search path, first entry first. A function file defines the function named after the file. A script file runs in the caller's workspace. Edited files are read again on the next run.
+
+```matlab
+addpath('lib')                 % add to the front, same as '-begin'
+addpath('lib', '-end')         % add to the end; 0 and 1 work like '-begin' and '-end'
+old = addpath('a', 'b')        % returns the previous path
+addpath(genpath('toolbox'))    % a folder and its subfolders, without private, @ and + folders
+rmpath('lib'); path            % path lists, path(p) sets
+which name; exist('name')      % where a name resolves to; 1 variable, 2 file, 5 built-in, 7 folder, 103 command-line function
+run('script'); mfilename       % run a file in this workspace; name of the running file
+savepath; restoredefaultpath   % keep the path for the next start; empty the path
+```
+
+Also available: `pwd`, `cd`, `fullfile`, `fileparts`, `pathsep`, `filesep`. Relative folders are made absolute when added. A folder that does not exist gives a warning and is skipped.
+
+`savepath` writes `pathdef.txt` in `%APPDATA%\openmat` (`$XDG_CONFIG_HOME/openmat` or `~/.config/openmat` elsewhere). `OPENMAT_PATHDEF` points at another file. The CLI and the GUI load it at start.
+
+The CLI adds the folder of the script to the path. `openmat --cd script.m` changes into that folder instead. In the GUI, **Run** and **Step** ask whether to **Change Folder** or **Add to Path** when the script's folder is neither the current folder nor on the path. **Path...** in the toolbar edits the search path: reorder, remove, add a folder, and **Save**.
+
+Not supported yet: `private/`, `+package`, and `@class` folders.
+
 ## HIL
 
 ```matlab
@@ -102,3 +125,4 @@ Every script starts with `clear` and `home`.
 - `examples/matrix_demo.m` shows `clear`, `home`, and `a .* b` for a row and a column
 - `examples/hil_loopback.m`
 - `examples/hil.m`
+- `examples/path_demo/main.m` calls a function from `examples/path_demo/lib` after `addpath`
