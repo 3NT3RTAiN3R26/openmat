@@ -219,6 +219,9 @@ fn sections(sos: &Matrix) -> MatResult<Vec<(Vec<f64>, Vec<f64>)>> {
     if sos.cols != 6 {
         return Err(MatError::new("sos must be an L-by-6 matrix [b0 b1 b2 a0 a1 a2]"));
     }
+    if !sos.is_real() {
+        return Err(MatError::new("sos must contain real coefficients"));
+    }
     (0..sos.rows)
         .map(|r| {
             let value = |c: usize| sos.get(r, c).re;
