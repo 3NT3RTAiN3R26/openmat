@@ -489,7 +489,7 @@ fn corrcoef(_: &mut Session, args: &[Value]) -> MatResult<Value> {
             data[j * p + i] = if i == j && c.get(i, i).re > 0.0 && c.get(i, i).re.is_finite() {
                 1.0
             } else {
-                c.get(i, j).re / (c.get(i, i).re * c.get(j, j).re).sqrt()
+                c.get(i, j).re / c.get(i, i).re.sqrt() / c.get(j, j).re.sqrt()
             };
         }
     }
