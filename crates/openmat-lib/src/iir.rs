@@ -4,7 +4,7 @@ use num_complex::Complex64;
 use openmat_core::{MatError, MatResult, Session, Value};
 
 use crate::filt::complex_column;
-use crate::sigproc::{poly_from_roots, polynomial_roots};
+use crate::sigproc::poly_from_roots;
 use crate::util::{matrix_arg, need, positive, real_scalar, row};
 
 /// Zeros, poles, and gain.
@@ -143,6 +143,32 @@ fn bilinear_zpk((z, p, k): Zpk, fs2: f64) -> Zpk {
     (zeros, poles, k * (shifted(&z) / shifted(&p)).re)
 }
 
+fn bilinear_coefficients(coefficients: &[f64], order: usize, fs2: f64) -> Vec<f64> {
+    let mut transformed = vec![0.0; order + 1];
+    let Some(first) = coefficients.iter().position(|c| *c != 0.0) else {
+        return transformed;
+    };
+    let coefficients = &coefficients[first..];
+    for (index, coefficient) in coefficients.iter().enumerate() {
+        let power = coefficients.len() - index - 1;
+        let mut term = vec![coefficient * fs2.powi(power as i32)];
+        for factor in
+            std::iter::repeat_n(-1.0, power).chain(std::iter::repeat_n(1.0, order - power))
+        {
+            let mut next = vec![0.0; term.len() + 1];
+            for (i, value) in term.iter().enumerate() {
+                next[i] += value;
+                next[i + 1] += factor * value;
+            }
+            term = next;
+        }
+        for (i, value) in term.iter().enumerate() {
+            transformed[i] += value;
+        }
+    }
+    transformed
+}
+
 fn finish(session: &Session, (z, p, k): Zpk) -> Value {
     if session.nargout >= 3 {
         return Value::Multi(vec![complex_column(z), complex_column(p), Value::scalar(k)]);
@@ -273,24 +299,27 @@ fn bilinear(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     }
     let num = matrix_arg(args, 0)?.reals()?;
     let den = matrix_arg(args, 1)?.reals()?;
-    let first = |p: &[f64]| p.iter().copied().find(|c| *c != 0.0);
-    let Some(den0) = first(&den) else {
-        return Err(MatError::new("bilinear denominator must not be zero"));
-    };
-    let num0 = first(&num).unwrap_or(0.0);
-    let z = polynomial_roots(&num)?;
-    let p = polynomial_roots(&den)?;
-    if z.len() > p.len() {
+    let den_start = den
+        .iter()
+        .position(|c| *c != 0.0)
+        .ok_or_else(|| MatError::new("bilinear denominator must not be zero"))?;
+    let num_start = num.iter().position(|c| *c != 0.0);
+    let den_degree = den.len() - den_start - 1;
+    let num_degree = num_start.map_or(0, |i| num.len() - i - 1);
+    if num_start.is_some() && num_degree > den_degree {
         return Err(MatError::new("bilinear needs a proper transfer function"));
     }
     let fs = real_scalar(args, 2)?;
-    let (zd, pd, kd) = bilinear_zpk((z, p, num0 / den0), 2.0 * fs);
-    Ok(finish_tf(session, (zd, pd, kd)))
+    let mut b = bilinear_coefficients(&num, den_degree, 2.0 * fs);
+    let mut a = bilinear_coefficients(&den[den_start..], den_degree, 2.0 * fs);
+    let scale = a[0];
+    for coefficient in b.iter_mut().chain(a.iter_mut()) {
+        *coefficient /= scale;
+    }
+    Ok(finish_tf(session, (b, a)))
 }
 
-fn finish_tf(session: &Session, (z, p, k): Zpk) -> Value {
-    let b: Vec<f64> = poly_from_roots(&z).iter().map(|c| c.re * k).collect();
-    let a: Vec<f64> = poly_from_roots(&p).iter().map(|c| c.re).collect();
+fn finish_tf(session: &Session, (b, a): (Vec<f64>, Vec<f64>)) -> Value {
     if session.nargout >= 2 {
         Value::Multi(vec![row(b), row(a)])
     } else {
@@ -456,6 +485,9 @@ mod tests {
     fn bilinear_transform() {
         let (b, a) = design("[b, a] = bilinear(1, [1 1], 1);");
         assert_close(&b, &[1.0 / 3.0, 1.0 / 3.0], 1e-12);
+        assert_close(&a, &[1.0, -1.0 / 3.0], 1e-12);
+        let (b, a) = design("[b, a] = bilinear([1 -2], [1 1], 1);");
+        assert_close(&b, &[0.0, -4.0 / 3.0], 1e-12);
         assert_close(&a, &[1.0, -1.0 / 3.0], 1e-12);
         let session = exec("[zd, pd, kd] = bilinear([], [-1], 1, 1);").unwrap();
         assert!((session.get("kd").unwrap().real_scalar().unwrap() - 1.0 / 3.0).abs() < 1e-12);
