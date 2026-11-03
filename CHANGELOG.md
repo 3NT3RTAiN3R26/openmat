@@ -10,6 +10,7 @@ Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch
 - Filtering: `filter` with initial conditions, final state, dimension, and the shape of the input (it returned a column before), `filtic`, `filtfilt`, `sosfilt`.
 - Conversions: `sos2tf`, `zp2tf` (pads the numerator like MATLAB), `tf2zp` (error for an improper system). Responses: `freqs`, `freqz` (MATLAB grid, `fs`, `whole`, point vectors), `phasez`, `grpdelay`, `impz`, `stepz` with the lengths MATLAB R2025a returns. `roots` lists the positive imaginary part of a conjugate pair first. `conv` and `deconv` follow the orientation of the first input.
 - `conv` accepts `'full'`, `'same'`, `'valid'`. New: `cov`, `corrcoef`, `xcov`.
+- IIR design: `butter` (low, high, bandpass, stop, analog, `[z, p, k]`), `cheby1`, `cheby2`, `bilinear`, `iirnotch`, `iirpeak`. `butter` with one output returns `b` instead of an error. Analog numerators are padded to the length of the denominator, and `[z, p, k]` come in MATLAB's order. `bilinear` follows MATLAB: two outputs give the transfer function form, three the zpk form, with an optional prewarp frequency. `iirnotch` and `iirpeak` accept `Ab`.
 
 ## 0.2.1
 
