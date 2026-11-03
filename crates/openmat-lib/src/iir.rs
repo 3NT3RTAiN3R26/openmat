@@ -265,7 +265,7 @@ fn bilinear(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
         let fs = real_scalar(args, 3)?;
         let (zd, pd, kd) = bilinear_zpk((z, p, real_scalar(args, 2)?), 2.0 * fs);
-        return Ok(if session.nargout >= 3 {
+        return Ok(if session.nargout >= 2 {
             Value::Multi(vec![complex_column(zd), complex_column(pd), Value::scalar(kd)])
         } else {
             complex_column(zd)
