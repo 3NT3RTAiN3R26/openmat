@@ -565,6 +565,9 @@ fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
             other => numeric.push(other),
         }
     }
+    if numeric.is_empty() {
+        return Err(MatError::new("xcorr needs a numeric input vector"));
+    }
     let x = numeric[0].clone().into_matrix()?;
     let (second, max_lag) = match numeric.len() {
         1 => (None, None),
