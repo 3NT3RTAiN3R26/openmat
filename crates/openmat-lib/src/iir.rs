@@ -253,6 +253,10 @@ fn cheby2(session: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 fn bilinear(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 3)?;
+    let fs = real_scalar(args, if args.len() >= 4 { 3 } else { 2 })?;
+    if !fs.is_finite() || fs <= 0.0 {
+        return Err(MatError::new("bilinear sampling frequency must be finite and positive"));
+    }
     if args.len() >= 4 {
         let z = matrix_arg(args, 0)?.data;
         let p = matrix_arg(args, 1)?.data;
