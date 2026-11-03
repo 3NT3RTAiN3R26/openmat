@@ -610,7 +610,7 @@ fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         None => n.saturating_sub(1),
     };
     let energy = |v: &[Complex64]| v.iter().map(|z| z.norm_sqr()).sum::<f64>();
-    let coeff_norm = (energy(&xs) * energy(&ys)).sqrt();
+    let coeff_norm = energy(&xs).sqrt() * energy(&ys).sqrt();
     let mut values = Vec::with_capacity(2 * max_lag + 1);
     let mut lags = Vec::with_capacity(2 * max_lag + 1);
     for lag in -(max_lag as i64)..=(max_lag as i64) {
