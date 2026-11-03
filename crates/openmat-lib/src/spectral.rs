@@ -461,7 +461,7 @@ fn spectrogram(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         vec![
             Value::Matrix(s),
             col(p.frequencies(onesided)),
-            col(times),
+            crate::util::row(times),
             Value::Matrix(power),
         ],
     ))
