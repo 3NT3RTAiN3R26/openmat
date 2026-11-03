@@ -8,9 +8,7 @@ pub fn register(session: &mut Session) {
     for (name, func) in [
         ("fft", fft as fn(&mut Session, &[Value]) -> MatResult<Value>),
         ("ifft", ifft),
-        ("filter", filter),
         ("conv", conv),
-        ("freqz", freqz),
         ("butter", butter),
         ("fir1", fir1),
     ] {
@@ -97,44 +95,26 @@ fn fft_buf(samples: &[Complex64], forward: bool) -> Vec<Complex64> {
     buf
 }
 
-fn filter(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    need(args, 3)?;
-    let b = matrix_arg(args, 0)?.reals()?;
-    let a = matrix_arg(args, 1)?.reals()?;
-    let x = matrix_arg(args, 2)?.reals()?;
-    if a.is_empty() || a[0] == 0.0 {
-        return Err(MatError::new("filter denominator a(1) must be non-zero"));
-    }
-    let y = direct_form(&b, &a, &x);
-    Ok(col(y))
-}
-
-pub fn direct_form(b: &[f64], a: &[f64], x: &[f64]) -> Vec<f64> {
-    let a0 = a[0];
-    let mut y = vec![0.0; x.len()];
-    for n in 0..x.len() {
-        let mut acc = 0.0;
-        for (k, bk) in b.iter().enumerate() {
-            if n >= k {
-                acc += bk * x[n - k];
-            }
-        }
-        for k in 1..a.len() {
-            if n >= k {
-                acc -= a[k] * y[n - k];
-            }
-        }
-        y[n] = acc / a0;
-    }
-    y
-}
-
 fn conv(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
-    let a = matrix_arg(args, 0)?.reals()?;
+    let a_matrix = matrix_arg(args, 0)?;
+    let a = a_matrix.reals()?;
     let b = matrix_arg(args, 1)?.reals()?;
+    let shape = match args.get(2) {
+        None => "full".to_string(),
+        Some(Value::Char(shape)) => shape.clone(),
+        Some(other) => {
+            return Err(MatError::new(format!(
+                "conv shape must be 'full', 'same' or 'valid', got {}",
+                other.type_name()
+            )))
+        }
+    };
+    // The result is a column when the first input is a column vector, otherwise a row.
+    let column = a_matrix.cols == 1 && a_matrix.rows > 1;
+    let oriented = |values: Vec<f64>| if column { col(values) } else { row(values) };
     if a.is_empty() || b.is_empty() {
-        return Ok(row(Vec::new()));
+        return Ok(oriented(Vec::new()));
     }
     let mut y = vec![0.0; a.len() + b.len() - 1];
     for (i, av) in a.iter().enumerate() {
@@ -142,63 +122,21 @@ fn conv(_: &mut Session, args: &[Value]) -> MatResult<Value> {
             y[i + j] += av * bv;
         }
     }
-    Ok(row(y))
-}
-
-fn freqz(session: &mut Session, args: &[Value]) -> MatResult<Value> {
-    need(args, 2)?;
-    let b = matrix_arg(args, 0)?.reals()?;
-    let a = matrix_arg(args, 1)?.reals()?;
-    let n = if args.len() >= 3 {
-        positive(real_scalar(args, 2)?)?.max(1)
-    } else {
-        64
+    let y = match shape.as_str() {
+        "full" => y,
+        "same" => {
+            let start = (b.len() - 1).div_ceil(2);
+            y[start..start + a.len()].to_vec()
+        }
+        "valid" if a.len() >= b.len() => y[b.len() - 1..a.len()].to_vec(),
+        "valid" => Vec::new(),
+        other => {
+            return Err(MatError::new(format!(
+                "conv shape must be 'full', 'same' or 'valid', got '{other}'"
+            )))
+        }
     };
-    let (h, w) = frequency_response(&b, &a, n);
-    if session.nargout >= 2 {
-        Ok(Value::Multi(vec![
-            Value::Matrix(Matrix {
-                rows: n,
-                cols: 1,
-                data: h,
-                logical: false,
-            }),
-            col(w),
-        ]))
-    } else {
-        Ok(Value::Matrix(Matrix {
-            rows: n,
-            cols: 1,
-            data: h,
-            logical: false,
-        }))
-    }
-}
-
-pub fn frequency_response(b: &[f64], a: &[f64], n: usize) -> (Vec<Complex64>, Vec<f64>) {
-    let mut h = Vec::with_capacity(n);
-    let mut w = Vec::with_capacity(n);
-    for i in 0..n {
-        let omega = if n == 1 {
-            0.0
-        } else {
-            std::f64::consts::PI * i as f64 / (n - 1) as f64
-        };
-        let z = Complex64::from_polar(1.0, -omega);
-        let num = polyval_complex(b, z);
-        let den = polyval_complex(a, z);
-        h.push(num / den);
-        w.push(omega);
-    }
-    (h, w)
-}
-
-fn polyval_complex(coeff_high_first: &[f64], z: Complex64) -> Complex64 {
-    let mut acc = Complex64::new(0.0, 0.0);
-    for c in coeff_high_first {
-        acc = acc * z + c;
-    }
-    acc
+    Ok(oriented(y))
 }
 
 fn butter(session: &mut Session, args: &[Value]) -> MatResult<Value> {

@@ -225,7 +225,7 @@ fn angle(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 // Work along a dimension
 
-fn default_dim(m: &Matrix) -> usize {
+pub(crate) fn default_dim(m: &Matrix) -> usize {
     if m.rows == 1 {
         2
     } else {
@@ -372,11 +372,15 @@ fn unwrap(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 fn deconv(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
-    let y = matrix_arg(args, 0)?.reals()?;
+    let y_matrix = matrix_arg(args, 0)?;
+    let y = y_matrix.reals()?;
     let a = matrix_arg(args, 1)?.reals()?;
     if a.is_empty() || a[0] == 0.0 {
         return Err(MatError::new("deconv divisor a(1) must be non-zero"));
     }
+    // The outputs are columns when the dividend is a column vector, otherwise rows.
+    let column = y_matrix.cols == 1 && y_matrix.rows > 1;
+    let oriented = |values: Vec<f64>| if column { col(values) } else { row(values) };
     let (quotient, remainder) = if y.len() < a.len() {
         (vec![0.0], y)
     } else {
@@ -392,9 +396,9 @@ fn deconv(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         (quotient, remainder)
     };
     if session.nargout >= 2 {
-        Ok(Value::Multi(vec![row(quotient), row(remainder)]))
+        Ok(Value::Multi(vec![oriented(quotient), oriented(remainder)]))
     } else {
-        Ok(row(quotient))
+        Ok(oriented(quotient))
     }
 }
 
@@ -418,8 +422,13 @@ fn poly(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     } else {
         return Err(MatError::new("poly needs a vector or a square matrix"));
     };
+    Ok(coefficient_row(poly_from_roots(&zeros), conjugate_closed(&zeros)))
+}
+
+/// Coefficients, highest power first, of the monic polynomial with the given roots.
+pub(crate) fn poly_from_roots(zeros: &[Complex64]) -> Vec<Complex64> {
     let mut coeff = vec![Complex64::new(1.0, 0.0)];
-    for z in &zeros {
+    for z in zeros {
         let mut next = vec![Complex64::new(0.0, 0.0); coeff.len() + 1];
         for (i, c) in coeff.iter().enumerate() {
             next[i] += c;
@@ -427,15 +436,38 @@ fn poly(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
         coeff = next;
     }
-    if coeff.iter().all(|c| c.im == 0.0) {
-        return Ok(row(coeff.iter().map(|c| c.re).collect()));
+    coeff
+}
+
+/// True when every non-real root has its complex conjugate among the roots.
+pub(crate) fn conjugate_closed(roots: &[Complex64]) -> bool {
+    let mut unmatched: Vec<Complex64> = roots.iter().copied().filter(|r| r.im != 0.0).collect();
+    while let Some(root) = unmatched.pop() {
+        let close = |other: &Complex64| {
+            let tolerance = 1e-9 * (1.0 + root.norm());
+            (other.re - root.re).abs() <= tolerance && (other.im + root.im).abs() <= tolerance
+        };
+        match unmatched.iter().position(close) {
+            Some(partner) => {
+                unmatched.swap_remove(partner);
+            }
+            None => return false,
+        }
     }
-    Ok(Value::Matrix(Matrix {
+    true
+}
+
+/// A row vector of the coefficients. `real` drops the imaginary parts, which are then rounding noise.
+pub(crate) fn coefficient_row(coeff: Vec<Complex64>, real: bool) -> Value {
+    if real {
+        return row(coeff.iter().map(|c| c.re).collect());
+    }
+    Value::Matrix(Matrix {
         rows: 1,
         cols: coeff.len(),
         data: coeff,
         logical: false,
-    }))
+    })
 }
 
 fn roots(_: &mut Session, args: &[Value]) -> MatResult<Value> {
@@ -443,7 +475,18 @@ fn roots(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     if m.rows != 1 && m.cols != 1 && m.numel() != 0 {
         return Err(MatError::new("roots needs a vector of coefficients"));
     }
-    let mut p = m.reals()?;
+    let found = polynomial_roots(&m.reals()?)?;
+    Ok(Value::Matrix(Matrix {
+        rows: found.len(),
+        cols: 1,
+        data: found,
+        logical: false,
+    }))
+}
+
+/// Roots of a real polynomial. Leading zeros are dropped, trailing zeros give roots at 0.
+pub(crate) fn polynomial_roots(coefficients: &[f64]) -> MatResult<Vec<Complex64>> {
+    let mut p = coefficients.to_vec();
     let leading = p.iter().take_while(|c| **c == 0.0).count();
     p.drain(..leading);
     let trailing = p.iter().rev().take_while(|c| **c == 0.0).count();
@@ -464,12 +507,13 @@ fn roots(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
     };
     found.extend(std::iter::repeat_n(Complex64::new(0.0, 0.0), trailing));
-    Ok(Value::Matrix(Matrix {
-        rows: found.len(),
-        cols: 1,
-        data: found,
-        logical: false,
-    }))
+    // MATLAB lists the member with the positive imaginary part first.
+    for i in 0..found.len().saturating_sub(1) {
+        if found[i].im < 0.0 && found[i + 1] == found[i].conj() {
+            found.swap(i, i + 1);
+        }
+    }
+    Ok(found)
 }
 
 // Analysis
@@ -568,7 +612,7 @@ enum XcorrScale {
     Coeff,
 }
 
-fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+pub(crate) fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 1)?;
     let mut scale = XcorrScale::None;
     let mut numeric: Vec<&Value> = Vec::new();

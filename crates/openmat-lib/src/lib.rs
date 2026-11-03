@@ -1,5 +1,6 @@
 mod control;
 mod dsp;
+mod filt;
 mod fixed;
 mod hilb;
 mod numeric;
@@ -21,6 +22,7 @@ pub fn register(session: &mut Session) {
     numeric::register(session);
     dsp::register(session);
     sigproc::register(session);
+    filt::register(session);
     control::register(session);
     plotb::register(session);
     fixed::register(session);
