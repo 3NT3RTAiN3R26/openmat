@@ -71,7 +71,9 @@ fn lfilter(b: &[f64], a: &[f64], x: &[f64], zi: &[f64]) -> (Vec<f64>, Vec<f64>) 
 fn sequences(m: &Matrix, dim: usize) -> MatResult<Vec<Vec<f64>>> {
     let values = m.reals()?;
     Ok(if dim == 1 {
-        values.chunks(m.rows.max(1)).take(m.cols).map(<[f64]>::to_vec).collect()
+        (0..m.cols)
+            .map(|c| values[c * m.rows..(c + 1) * m.rows].to_vec())
+            .collect()
     } else {
         (0..m.rows)
             .map(|r| (0..m.cols).map(|c| values[c * m.rows + r]).collect())
