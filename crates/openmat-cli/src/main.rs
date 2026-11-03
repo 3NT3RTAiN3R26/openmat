@@ -89,7 +89,7 @@ fn repl(session: &mut Session) {
             return;
         }
     };
-    println!("openmat 0.1.0. MATLAB is a trademark of MathWorks. openmat is not affiliated with MathWorks.");
+    println!("openmat {}. MATLAB is a trademark of MathWorks. openmat is not affiliated with MathWorks.", env!("CARGO_PKG_VERSION"));
     loop {
         match editor.readline(">> ") {
             Ok(line) => {
