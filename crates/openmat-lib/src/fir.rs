@@ -51,7 +51,7 @@ enum Kind {
     DcOne,
 }
 
-fn fir1(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+pub(crate) fn fir1(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
     let mut order = positive(real_scalar(args, 0)?)?;
     if order == 0 {
@@ -202,7 +202,7 @@ enum LsKind {
     Differentiator,
 }
 
-fn firls(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+pub(crate) fn firls(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 3)?;
     let mut kind = LsKind::Symmetric;
     let mut numeric = Vec::new();

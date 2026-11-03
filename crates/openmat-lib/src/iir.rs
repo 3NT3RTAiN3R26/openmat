@@ -312,7 +312,7 @@ fn butter(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     design(session, args, "butter", 0, |n, _| butterworth_prototype(n))
 }
 
-fn cheby1(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+pub(crate) fn cheby1(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     design(session, args, "cheby1", 1, chebyshev1_prototype)
 }
 

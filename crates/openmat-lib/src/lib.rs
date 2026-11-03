@@ -8,6 +8,7 @@ mod iir;
 mod numeric;
 mod pathfn;
 mod plotb;
+mod resample;
 mod sigproc;
 mod spectral;
 mod text;
@@ -26,6 +27,7 @@ pub fn register(session: &mut Session) {
     dsp::register(session);
     sigproc::register(session);
     spectral::register(session);
+    resample::register(session);
     filt::register(session);
     iir::register(session);
     fir::register(session);

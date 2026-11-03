@@ -310,7 +310,7 @@ fn complex_col(values: Vec<Complex64>) -> Value {
     })
 }
 
-fn outputs(session: &Session, values: Vec<Value>) -> Value {
+pub(crate) fn outputs(session: &Session, values: Vec<Value>) -> Value {
     let wanted = session.nargout.clamp(1, values.len());
     if wanted == 1 {
         values
@@ -701,7 +701,7 @@ fn sfdr(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 // Short-time Fourier transform and pspectrum
 
-fn kaiser_window(n: usize, beta: f64) -> Vec<f64> {
+pub(crate) fn kaiser_window(n: usize, beta: f64) -> Vec<f64> {
     if n == 1 {
         return vec![1.0];
     }
