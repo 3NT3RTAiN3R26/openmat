@@ -262,6 +262,9 @@ fn sos2tf(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     if sos.cols != 6 {
         return Err(MatError::new("sos must be an L-by-6 matrix [b0 b1 b2 a0 a1 a2]"));
     }
+    if !sos.is_real() {
+        return Err(MatError::new("sos must contain real coefficients"));
+    }
     let gain = if args.len() >= 2 { real_scalar(args, 1)? } else { 1.0 };
     let mut b = vec![gain];
     let mut a = vec![1.0];
