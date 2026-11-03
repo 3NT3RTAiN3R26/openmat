@@ -12,6 +12,7 @@ Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch
 - `conv` accepts `'full'`, `'same'`, `'valid'`. New: `cov`, `corrcoef`, `xcov`.
 - IIR design: `butter` (low, high, bandpass, stop, analog, `[z, p, k]`), `cheby1`, `cheby2`, `bilinear`, `iirnotch`, `iirpeak`. `butter` with one output returns `b` instead of an error. Analog numerators are padded to the length of the denominator, and `[z, p, k]` come in MATLAB's order. `bilinear` follows MATLAB: two outputs give the transfer function form, three the zpk form, with an optional prewarp frequency. `iirnotch` and `iirpeak` accept `Ab`.
 - FIR design: `fir1` with high, bandpass, stop, multiband, window and scaling options, `firls` (with hilbert, differentiator and weights), `sgolay` (weights and the `G` output), `sgolayfilt` (weights), `gaussdesign`, `rcosdesign`.
+- Spectral analysis: `periodogram`, `pwelch`, `cpsd`, `mscohere`, `tfestimate` (window, overlap, `nfft`, `fs`, `onesided`/`twosided`, `psd`/`power`), `spectrogram` (`[S, F, T, P]`), `bandpower`, `enbw`, `snr`, `thd`, `sfdr`, `sinad` (Kaiser window with beta 38, harmonics up to the sixth). Not yet: `stft`, `istft`, `pspectrum`, plot output without output arguments.
 
 ## 0.2.1
 

@@ -9,6 +9,7 @@ mod numeric;
 mod pathfn;
 mod plotb;
 mod sigproc;
+mod spectral;
 mod text;
 mod util;
 
@@ -24,6 +25,7 @@ pub fn register(session: &mut Session) {
     numeric::register(session);
     dsp::register(session);
     sigproc::register(session);
+    spectral::register(session);
     filt::register(session);
     iir::register(session);
     fir::register(session);
