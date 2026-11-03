@@ -11,7 +11,7 @@ Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch
 - Conversions: `sos2tf`, `zp2tf` (pads the numerator like MATLAB), `tf2zp` (error for an improper system). Responses: `freqs`, `freqz` (MATLAB grid, `fs`, `whole`, point vectors), `phasez`, `grpdelay`, `impz`, `stepz` with the lengths MATLAB R2025a returns. `roots` lists the positive imaginary part of a conjugate pair first. `conv` and `deconv` follow the orientation of the first input.
 - `conv` accepts `'full'`, `'same'`, `'valid'`. New: `cov`, `corrcoef`, `xcov`.
 - IIR design: `butter` (low, high, bandpass, stop, analog, `[z, p, k]`), `cheby1`, `cheby2`, `bilinear`, `iirnotch`, `iirpeak`. `butter` with one output returns `b` instead of an error. Analog numerators are padded to the length of the denominator, and `[z, p, k]` come in MATLAB's order. `bilinear` follows MATLAB: two outputs give the transfer function form, three the zpk form, with an optional prewarp frequency. `iirnotch` and `iirpeak` accept `Ab`.
-- FIR design: `fir1` with high, bandpass, stop, multiband, window and scaling options, `firls`, `sgolay`, `sgolayfilt`, `gaussdesign`, `rcosdesign`.
+- FIR design: `fir1` with high, bandpass, stop, multiband, window and scaling options, `firls` (with hilbert, differentiator and weights), `sgolay` (weights and the `G` output), `sgolayfilt` (weights), `gaussdesign`, `rcosdesign`.
 
 ## 0.2.1
 
