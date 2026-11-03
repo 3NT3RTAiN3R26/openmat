@@ -206,8 +206,12 @@ fn nextpow2(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 fn sinc(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     Ok(Value::Matrix(m.map(|z| {
-        let x = z.re;
-        Complex64::from(if x == 0.0 { 1.0 } else { (PI * x).sin() / (PI * x) })
+        if z == Complex64::new(0.0, 0.0) {
+            Complex64::new(1.0, 0.0)
+        } else {
+            let x = z * PI;
+            x.sin() / x
+        }
     })))
 }
 
