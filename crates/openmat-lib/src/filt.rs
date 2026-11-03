@@ -442,7 +442,7 @@ fn statistic_columns(args: &[Value]) -> MatResult<(Vec<Vec<f64>>, f64)> {
             if second.numel() != first.numel() {
                 return Err(MatError::new("cov and corrcoef need inputs of the same length"));
             }
-            columns.push(second.reals()?);
+            columns = vec![first.reals()?, second.reals()?];
         }
     }
     if args.len() >= 3 {
