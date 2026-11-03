@@ -16,6 +16,14 @@ pub fn register(session: &mut Session) {
         ("filesep", filesep),
         ("pwd", pwd),
         ("cd", cd),
+        ("fullfile", fullfile),
+        ("fileparts", fileparts),
+        ("which", which),
+        ("exist", exist),
+        ("mfilename", mfilename),
+        ("run", run),
+        ("restoredefaultpath", restoredefaultpath),
+        ("savepath", savepath),
     ] {
         session.register_builtin(name, func);
     }
@@ -84,8 +92,8 @@ fn addpath(session: &mut Session, args: &[Value]) -> MatResult<Value> {
                 }
             },
             other if index > 0 => match other.real_scalar()? {
-                v if v == 0.0 => append = false,
-                v if v == 1.0 => append = true,
+                0.0 => append = false,
+                1.0 => append = true,
                 _ => return Err(MatError::new("addpath position must be 0, 1, '-begin' or '-end'")),
             },
             other => {
@@ -215,6 +223,163 @@ fn cd(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     }
 }
 
+fn is_sep(c: char) -> bool {
+    c == '/' || c == '\\'
+}
+
+fn fullfile(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    let mut out = String::new();
+    for index in 0..args.len() {
+        let part = char_arg(args, index)?;
+        if part.is_empty() {
+            continue;
+        }
+        if out.is_empty() {
+            out = part;
+            continue;
+        }
+        if !out.ends_with(is_sep) {
+            out.push(std::path::MAIN_SEPARATOR);
+        }
+        out.push_str(part.trim_start_matches(is_sep));
+    }
+    Ok(Value::Char(out))
+}
+
+fn fileparts(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    let text = char_arg(args, 0)?;
+    let (dir, file) = match text.rfind(is_sep) {
+        Some(at) => {
+            let keep_sep = at == 0 || text[..at].ends_with(':');
+            (&text[..if keep_sep { at + 1 } else { at }], &text[at + 1..])
+        }
+        None => ("", text.as_str()),
+    };
+    let (name, ext) = match file.rfind('.') {
+        Some(at) => (&file[..at], &file[at..]),
+        None => (file, ""),
+    };
+    let items = vec![
+        Value::Char(dir.to_string()),
+        Value::Char(name.to_string()),
+        Value::Char(ext.to_string()),
+    ];
+    if session.nargout >= 2 {
+        Ok(Value::Multi(items))
+    } else {
+        Ok(items.into_iter().next().expect("three items"))
+    }
+}
+
+fn which(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    let name = char_arg(args, 0)?;
+    let found = if session.get(&name).is_some() {
+        Some("variable".to_string())
+    } else if let Some(file) = session.which_file(&name) {
+        Some(file.to_string_lossy().into_owned())
+    } else if session.funcs.contains_key(&name) {
+        Some("command-line function".to_string())
+    } else if session.builtins.contains_key(&name) {
+        Some(format!("built-in ({name})"))
+    } else {
+        None
+    };
+    if session.nargout == 0 {
+        match found {
+            Some(text) => session.writeln(&text),
+            None => session.writeln(&format!("'{name}' not found.")),
+        }
+        return Ok(empty());
+    }
+    Ok(Value::Char(found.unwrap_or_default()))
+}
+
+fn exist(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    let name = char_arg(args, 0)?;
+    let kind = if args.len() > 1 { char_arg(args, 1)? } else { String::new() };
+    let is_var = session.get(&name).is_some();
+    let is_file = session.which_file(&name).is_some() || Path::new(&name).is_file();
+    let is_dir = Path::new(&name).is_dir();
+    let is_builtin = session.builtins.contains_key(&name);
+    let is_cmd_func = session.funcs.contains_key(&name);
+    let code = match kind.as_str() {
+        "" => {
+            if is_var {
+                1.0
+            } else if is_file {
+                2.0
+            } else if is_cmd_func {
+                103.0
+            } else if is_builtin {
+                5.0
+            } else if is_dir {
+                7.0
+            } else {
+                0.0
+            }
+        }
+        "var" => f64::from(is_var),
+        "file" if is_file => 2.0,
+        "file" | "dir" if is_dir => 7.0,
+        "builtin" if is_builtin => 5.0,
+        "file" | "dir" | "builtin" | "class" => 0.0,
+        other => return Err(MatError::new(format!("Unrecognized option '{other}' for exist"))),
+    };
+    Ok(Value::scalar(code))
+}
+
+fn mfilename(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    let Some(file) = session.current_file.clone() else {
+        return Ok(Value::Char(String::new()));
+    };
+    let text = match args.first() {
+        None => file
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        Some(Value::Char(kind)) if kind == "fullpath" => file
+            .with_extension("")
+            .to_string_lossy()
+            .into_owned(),
+        Some(Value::Char(kind)) if kind == "fullpathext" => file.to_string_lossy().into_owned(),
+        Some(_) => return Err(MatError::new("mfilename option must be 'fullpath' or 'fullpathext'")),
+    };
+    Ok(Value::Char(text))
+}
+
+fn run(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    let target = char_arg(args, 0)?;
+    let mut file = PathBuf::from(&target);
+    if !file.is_file() && !file.with_extension("m").is_file() {
+        if let Some(found) = session.which_file(&target) {
+            file = found;
+        }
+    }
+    session.run_file(&file)?;
+    Ok(empty())
+}
+
+fn restoredefaultpath(session: &mut Session, _: &[Value]) -> MatResult<Value> {
+    let old = joined(session);
+    session.search_path.clear();
+    session.unload_path_files();
+    Ok(previous(session, old))
+}
+
+fn savepath(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    let file = match args.first() {
+        Some(_) => PathBuf::from(char_arg(args, 0)?),
+        None => openmat_core::pathdef_file()
+            .ok_or_else(|| MatError::new("Unable to save path: no configuration folder"))?,
+    };
+    session.save_path_to(&file)?;
+    if session.nargout == 0 {
+        Ok(empty())
+    } else {
+        Ok(Value::scalar(0.0))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -340,6 +505,105 @@ mod tests {
         assert_eq!(parts.len(), 3, "{parts:?}");
         assert!(parts[1].ends_with("lib") && parts[2].ends_with("deep"));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn text(session: &openmat_core::Session, name: &str) -> String {
+        match session.get(name).unwrap() {
+            openmat_core::Value::Char(text) => text.clone(),
+            other => panic!("{other}"),
+        }
+    }
+
+    #[test]
+    fn fullfile_and_fileparts() {
+        let session = exec(
+            "a = fullfile('x', 'y', 'z.m'); b = fullfile('x/', '/y'); [p, n, e] = fileparts('dir/sub/file.tar.gz'); q = fileparts('plain'); [u, n2, e2] = fileparts('.bashrc');",
+        )
+        .unwrap();
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(text(&session, "a"), format!("x{sep}y{sep}z.m"));
+        assert_eq!(text(&session, "b"), "x/y");
+        assert_eq!(text(&session, "p"), "dir/sub");
+        assert_eq!(text(&session, "n"), "file.tar");
+        assert_eq!(text(&session, "e"), ".gz");
+        assert_eq!(text(&session, "q"), "");
+        assert_eq!(text(&session, "n2"), "");
+        assert_eq!(text(&session, "e2"), ".bashrc");
+    }
+
+    #[test]
+    fn exist_and_which_report_variables_files_and_builtins() {
+        let dir = temp_dir("exist");
+        fs::write(dir.join("here.m"), "function y = here()\ny = 1;\nend\n").unwrap();
+        let d = lit(&dir);
+        let src = format!(
+            "x = 1; a = exist('x'); b = exist('here'); addpath('{d}'); c = exist('here'); e = exist('sin'); f = exist('{d}'); g = exist('nope_xyz'); h = exist('x', 'var'); w = which('here'); v = which('sin');"
+        );
+        let session = exec(&src).unwrap();
+        let num = |name: &str| session.get(name).unwrap().real_scalar().unwrap();
+        assert_eq!(num("a"), 1.0);
+        assert_eq!(num("b"), 0.0);
+        assert_eq!(num("c"), 2.0);
+        assert_eq!(num("e"), 5.0);
+        assert_eq!(num("f"), 7.0);
+        assert_eq!(num("g"), 0.0);
+        assert_eq!(num("h"), 1.0);
+        assert_eq!(text(&session, "w"), dir.join("here.m").to_string_lossy());
+        assert_eq!(text(&session, "v"), "built-in (sin)");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn mfilename_names_the_running_script_and_function_file() {
+        let dir = temp_dir("mf");
+        fs::write(dir.join("who_script.m"), "n = mfilename;\n").unwrap();
+        fs::write(dir.join("who_fn.m"), "function r = who_fn()\nr = mfilename;\nend\n").unwrap();
+        let d = lit(&dir);
+        let session = exec(&format!("addpath('{d}'); who_script; s = n; f = who_fn(); top = mfilename;")).unwrap();
+        assert_eq!(text(&session, "s"), "who_script");
+        assert_eq!(text(&session, "f"), "who_fn");
+        assert_eq!(text(&session, "top"), "");
+        assert_eq!(session.current_file, None);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_executes_a_file_in_the_workspace_by_path_or_name() {
+        let dir = temp_dir("run");
+        fs::write(dir.join("job.m"), "done = 42;\n").unwrap();
+        let d = lit(&dir);
+        let by_path = exec(&format!("run('{d}/job.m');")).unwrap();
+        assert_eq!(by_path.get("done").unwrap().real_scalar().unwrap(), 42.0);
+        let by_name = exec(&format!("addpath('{d}'); run('job');")).unwrap();
+        assert_eq!(by_name.get("done").unwrap().real_scalar().unwrap(), 42.0);
+        assert!(exec("run('no_such_script_xyz');").is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn savepath_roundtrip_drops_missing_folders_and_restoredefaultpath_clears() {
+        let keep = temp_dir("save_keep");
+        let gone = temp_dir("save_gone");
+        let file = std::env::temp_dir().join(format!("openmat_pathdef_{}.txt", std::process::id()));
+        let src = format!(
+            "addpath('{}'); addpath('{}'); savepath('{}');",
+            lit(&keep),
+            lit(&gone),
+            lit(&file)
+        );
+        let saved = exec(&src).unwrap();
+        assert_eq!(saved.search_path.len(), 2);
+        fs::remove_dir_all(&gone).unwrap();
+        let mut fresh = crate::session();
+        fresh.load_path_from(&file).unwrap();
+        assert_eq!(fresh.search_path, vec![keep.clone()]);
+        fresh.eval_source("restoredefaultpath;").unwrap();
+        assert!(fresh.search_path.is_empty());
+        fresh
+            .load_path_from(&std::env::temp_dir().join("openmat_no_such_pathdef.txt"))
+            .unwrap();
+        fs::remove_file(&file).unwrap();
+        fs::remove_dir_all(&keep).unwrap();
     }
 
     #[test]

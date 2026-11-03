@@ -16,6 +16,8 @@ pub struct UserFunc {
     pub params: Vec<String>,
     pub outputs: Vec<String>,
     pub body: Vec<Stmt>,
+    /// The `.m` file the function was loaded from, if any.
+    pub file: Option<PathBuf>,
 }
 
 pub struct Session {
@@ -25,8 +27,10 @@ pub struct Session {
     /// Folders searched for `.m` files after the current folder, first entry first.
     pub search_path: Vec<PathBuf>,
     pub(crate) path_funcs: Vec<String>,
-    pub(crate) path_scripts: HashMap<String, Vec<Stmt>>,
+    pub(crate) path_scripts: HashMap<String, (PathBuf, Vec<Stmt>)>,
     pub(crate) path_errors: HashMap<String, String>,
+    /// The file being executed, for `mfilename`.
+    pub current_file: Option<PathBuf>,
     pub figures: Vec<Figure>,
     pub current_figure: usize,
     pub output: String,
@@ -60,6 +64,7 @@ impl Session {
             path_funcs: Vec::new(),
             path_scripts: HashMap::new(),
             path_errors: HashMap::new(),
+            current_file: None,
             figures: vec![Figure::new()],
             current_figure: 0,
             output: String::new(),

@@ -26,6 +26,9 @@ struct Cli {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let mut session = openmat_lib::session();
+    if let Err(err) = session.load_saved_path() {
+        eprintln!("saved path ignored: {err}");
+    }
     if let Some(code) = cli.eval {
         return finish(&mut session, &code);
     }
@@ -37,6 +40,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         };
+        session.current_file = std::path::absolute(&path).ok();
         if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
             let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
             if cli.change_dir {

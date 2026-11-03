@@ -39,6 +39,7 @@ impl Session {
                         params: params.clone(),
                         outputs: outputs.clone(),
                         body: body.clone(),
+                        file: None,
                     },
                 );
             }
@@ -599,7 +600,12 @@ impl Session {
         let prev = self.in_func;
         self.in_func = true;
         self.scopes.push(scope);
+        let saved_file = match &func.file {
+            Some(file) => self.current_file.replace(file.clone()),
+            None => self.current_file.clone(),
+        };
         let flow = self.exec_block(&func.body);
+        self.current_file = saved_file;
         let result = match flow {
             Ok(Flow::Return) | Ok(Flow::Next) => {
                 if func.outputs.is_empty() {

@@ -98,6 +98,7 @@ struct OpenmatApp {
     command_history_pos: Option<usize>,
     /// Set while the run dialog waits for an answer. Holds whether the run was a Step.
     path_prompt: Option<bool>,
+    path_editor_open: bool,
 }
 
 impl OpenmatApp {
@@ -125,7 +126,11 @@ impl OpenmatApp {
             command_history: Vec::new(),
             command_history_pos: None,
             path_prompt: None,
+            path_editor_open: false,
         };
+        if let Err(err) = app.session.load_saved_path() {
+            app.status = format!("saved path ignored: {err}");
+        }
         if let Some(arg) = std::env::args().nth(1) {
             app.load_path(PathBuf::from(arg));
         }
@@ -183,6 +188,9 @@ impl eframe::App for OpenmatApp {
                     .clicked()
                 {
                     self.debug_stop();
+                }
+                if ui.button("Path…").on_hover_text("Edit the search path").clicked() {
+                    self.path_editor_open = !self.path_editor_open;
                 }
                 if ui.button("Clear console").clicked() {
                     self.console.clear();
@@ -257,6 +265,7 @@ impl eframe::App for OpenmatApp {
         self.show_figure_windows(ctx);
         self.show_variable_window(ctx);
         self.show_path_prompt(ctx);
+        self.show_path_editor(ctx);
     }
 }
 
@@ -1207,6 +1216,105 @@ impl OpenmatApp {
         }
     }
 
+    fn show_path_editor(&mut self, ctx: &egui::Context) {
+        if !self.path_editor_open {
+            return;
+        }
+        let running = self.debug_run.is_some();
+        let mut open = true;
+        let mut remove = None;
+        let mut shift: Option<(usize, bool)> = None;
+        let mut add = false;
+        let mut save = false;
+        let mut clear = false;
+        egui::Window::new("Search path")
+            .id(egui::Id::new("path-editor"))
+            .open(&mut open)
+            .default_size([560.0, 320.0])
+            .show(ctx, |ui| {
+                let cwd = std::env::current_dir().map(|dir| dir.display().to_string()).unwrap_or_default();
+                ui.label(format!("Current folder: {cwd}"));
+                ui.weak("Searched after the current folder, top entry first.");
+                ui.separator();
+                if self.session.search_path.is_empty() {
+                    ui.weak("The search path is empty.");
+                }
+                let count = self.session.search_path.len();
+                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                    for (index, dir) in self.session.search_path.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add_enabled_ui(!running, |ui| {
+                                if ui.add_enabled(index > 0, egui::Button::new("Up")).clicked() {
+                                    shift = Some((index, true));
+                                }
+                                if ui.add_enabled(index + 1 < count, egui::Button::new("Down")).clicked() {
+                                    shift = Some((index, false));
+                                }
+                                if ui.button("Remove").clicked() {
+                                    remove = Some(index);
+                                }
+                            });
+                            ui.monospace(dir.display().to_string());
+                        });
+                    }
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(!running, |ui| {
+                        if ui.button("Add Folder…").clicked() {
+                            add = true;
+                        }
+                        if ui.button("Clear").clicked() {
+                            clear = true;
+                        }
+                    });
+                    if ui.button("Save").on_hover_text("Keep the path for the next start").clicked() {
+                        save = true;
+                    }
+                });
+                if running {
+                    ui.weak("Stop the debugger to change the path.");
+                }
+            });
+        if !open {
+            self.path_editor_open = false;
+        }
+        let path = &mut self.session.search_path;
+        let mut changed = false;
+        if let Some(index) = remove {
+            path.remove(index);
+            changed = true;
+        }
+        if let Some((index, up)) = shift {
+            let other = if up { index - 1 } else { index + 1 };
+            path.swap(index, other);
+            changed = true;
+        }
+        if clear {
+            path.clear();
+            changed = true;
+        }
+        if add {
+            if let Some(dir) = rfd::FileDialog::new().set_directory(&self.folder).pick_folder() {
+                path.retain(|known| known != &dir);
+                path.push(dir);
+                changed = true;
+            }
+        }
+        if changed {
+            self.session.unload_path_files();
+        }
+        if save {
+            self.status = match openmat_lib::pathdef_file() {
+                Some(file) => match self.session.save_path_to(&file) {
+                    Ok(()) => String::new(),
+                    Err(err) => err.to_string(),
+                },
+                None => "no configuration folder for the saved path".into(),
+            };
+        }
+    }
+
     fn script_dir_outside_path(&self) -> Option<PathBuf> {
         let dir = self.path.as_ref()?.parent()?;
         let dir = std::path::absolute(dir).ok()?;
@@ -1283,6 +1391,7 @@ impl OpenmatApp {
         let mut session = std::mem::replace(&mut self.session, openmat_lib::session());
         session.output.clear();
         session.new_figure_on_plot = self.new_figure;
+        session.current_file = self.path.as_ref().and_then(|path| std::path::absolute(path).ok());
         session.debug = Some(std::sync::Arc::clone(&ctl));
         let code = self.code.clone();
         let (tx, done_rx) = mpsc::channel();
