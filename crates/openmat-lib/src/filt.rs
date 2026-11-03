@@ -359,6 +359,7 @@ fn grpdelay(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let order = (a.len() - 1) as f64;
     let mut delays = Vec::with_capacity(n);
     let mut freqs = Vec::with_capacity(n);
+    let tolerance = 1e-10 * c.iter().map(|ck| ck.abs()).sum::<f64>();
     for i in 0..n {
         let omega = PI * i as f64 / n as f64;
         let mut num = Complex64::new(0.0, 0.0);
@@ -368,7 +369,7 @@ fn grpdelay(session: &mut Session, args: &[Value]) -> MatResult<Value> {
             den += term;
             num += term * k as f64;
         }
-        delays.push(if den.norm() < 1e-10 { 0.0 } else { (num / den).re - order });
+        delays.push(if den.norm() <= tolerance { 0.0 } else { (num / den).re - order });
         freqs.push(omega);
     }
     if session.nargout >= 2 {
