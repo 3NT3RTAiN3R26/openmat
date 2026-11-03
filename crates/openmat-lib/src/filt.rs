@@ -286,7 +286,7 @@ fn zp2tf(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     }
 }
 
-fn complex_column(values: Vec<Complex64>) -> Value {
+pub(crate) fn complex_column(values: Vec<Complex64>) -> Value {
     Value::Matrix(Matrix {
         rows: values.len(),
         cols: 1,

@@ -3,6 +3,7 @@ mod dsp;
 mod filt;
 mod fixed;
 mod hilb;
+mod iir;
 mod numeric;
 mod pathfn;
 mod plotb;
@@ -23,6 +24,7 @@ pub fn register(session: &mut Session) {
     dsp::register(session);
     sigproc::register(session);
     filt::register(session);
+    iir::register(session);
     control::register(session);
     plotb::register(session);
     fixed::register(session);
@@ -211,7 +213,9 @@ mod tests {
         assert!((m.get(0, 1).re - 1.0).abs() < 1e-8);
         assert!((scalar("y = ifft(fft([1 2 3 4])); y(1)") - 1.0).abs() < 1e-6);
         assert!((scalar("conv([1 2], [3 4])(2)") - 10.0).abs() < 1e-8);
-        let (b, a) = dsp::butterworth(1, 0.5).unwrap();
+        let butter = exec("[b, a] = butter(1, 0.5);").unwrap();
+        let b = butter.get("b").unwrap().clone().into_matrix().unwrap().reals().unwrap();
+        let a = butter.get("a").unwrap().clone().into_matrix().unwrap().reals().unwrap();
         assert!((b[0] - 0.5).abs() < 1e-6, "{b:?}");
         assert!((a[0] - 1.0).abs() < 1e-6);
         assert!(a[1].abs() < 1e-6, "{a:?}");

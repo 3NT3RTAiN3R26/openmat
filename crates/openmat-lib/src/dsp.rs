@@ -10,7 +10,6 @@ pub fn register(session: &mut Session) {
         ("ifft", ifft),
         ("conv", conv),
         ("freqz", freqz),
-        ("butter", butter),
         ("fir1", fir1),
     ] {
         session.register_builtin(name, func);
@@ -190,64 +189,6 @@ fn polyval_complex(coeff_high_first: &[f64], z: Complex64) -> Complex64 {
         acc = acc * z + c;
     }
     acc
-}
-
-fn butter(session: &mut Session, args: &[Value]) -> MatResult<Value> {
-    need(args, 2)?;
-    if session.nargout < 2 {
-        return Err(MatError::new("butter needs two outputs: [b, a] = butter(n, wn)"));
-    }
-    let order = positive(real_scalar(args, 0)?)?;
-    let wn = real_scalar(args, 1)?;
-    if order == 0 || !(0.0..1.0).contains(&wn) {
-        return Err(MatError::new("butter order must be >= 1 and wn must be in (0, 1)"));
-    }
-    let (b, a) = butterworth(order, wn)?;
-    Ok(Value::Multi(vec![row(b), row(a)]))
-}
-
-pub fn butterworth(order: usize, wn: f64) -> MatResult<(Vec<f64>, Vec<f64>)> {
-    let warped = 2.0 * (std::f64::consts::PI * wn / 2.0).tan();
-    let mut analog = Vec::with_capacity(order);
-    for k in 0..order {
-        let m = -((order as i32) - 1) + 2 * k as i32;
-        let angle = std::f64::consts::PI * m as f64 / (2.0 * order as f64);
-        analog.push(-Complex64::from_polar(1.0, angle) * warped);
-    }
-    let fs2 = Complex64::from(2.0);
-    let mut den = Complex64::from(1.0);
-    for pole in &analog {
-        den *= fs2 - pole;
-    }
-    let gain = (Complex64::from(warped.powi(order as i32)) / den).re;
-    let zeros = vec![Complex64::from(-1.0); order];
-    let poles: Vec<Complex64> = analog
-        .into_iter()
-        .map(|pole| (fs2 + pole) / (fs2 - pole))
-        .collect();
-    let b = real_poly_from_roots(&zeros, gain);
-    let a = real_poly_from_roots(&poles, 1.0);
-    if a.is_empty() || a[0].abs() < 1e-15 {
-        return Err(MatError::new("butter design failed"));
-    }
-    let a0 = a[0];
-    Ok((
-        b.into_iter().map(|v| v / a0).collect(),
-        a.into_iter().map(|v| v / a0).collect(),
-    ))
-}
-
-fn real_poly_from_roots(roots: &[Complex64], gain: f64) -> Vec<f64> {
-    let mut coeff = vec![Complex64::from(gain)];
-    for root in roots {
-        let mut next = vec![Complex64::new(0.0, 0.0); coeff.len() + 1];
-        for (i, c) in coeff.iter().enumerate() {
-            next[i] += c;
-            next[i + 1] -= c * root;
-        }
-        coeff = next;
-    }
-    coeff.into_iter().map(|c| c.re).collect()
 }
 
 fn fir1(_: &mut Session, args: &[Value]) -> MatResult<Value> {
