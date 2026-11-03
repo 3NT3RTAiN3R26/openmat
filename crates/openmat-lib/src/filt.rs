@@ -498,17 +498,23 @@ fn corrcoef(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 /// `xcorr` of the inputs with their means removed.
 fn xcov(session: &mut Session, args: &[Value]) -> MatResult<Value> {
-    let demeaned: Vec<Value> = args
+    let numeric: Vec<usize> = args
         .iter()
         .enumerate()
-        .map(|(i, arg)| match arg {
-            Value::Matrix(m) if i < 2 && m.numel() > 1 => {
-                let mean = m.data.iter().sum::<Complex64>() / m.numel() as f64;
-                Value::Matrix(m.map(|z| z - mean))
-            }
-            other => other.clone(),
+        .filter_map(|(i, arg)| match arg {
+            Value::Char(_) => None,
+            _ => Some(i),
         })
         .collect();
+    let mut demeaned = args.to_vec();
+    for (position, &index) in numeric.iter().take(2).enumerate() {
+        let m = args[index].clone().into_matrix()?;
+        if m.numel() == 0 || (position == 1 && numeric.len() == 2 && m.numel() == 1) {
+            continue;
+        }
+        let mean = m.data.iter().sum::<Complex64>() / m.numel() as f64;
+        demeaned[index] = Value::Matrix(m.map(|z| z - mean));
+    }
     xcorr(session, &demeaned)
 }
 
