@@ -418,8 +418,7 @@ fn poly(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
         coeff = next;
     }
-    let scale = coeff.iter().map(|c| c.norm()).fold(1.0, f64::max);
-    if coeff.iter().all(|c| c.im.abs() <= 1e-10 * scale) {
+    if coeff.iter().all(|c| c.im == 0.0) {
         return Ok(row(coeff.iter().map(|c| c.re).collect()));
     }
     Ok(Value::Matrix(Matrix {
