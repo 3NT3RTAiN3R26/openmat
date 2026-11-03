@@ -13,7 +13,7 @@ struct Cli {
     #[arg(long, default_value = "udp")]
     proto: String,
     /// Bind address
-    #[arg(long, default_value = "0.0.0.0:5000")]
+    #[arg(long, default_value = "127.0.0.1:5000")]
     bind: String,
 }
 
