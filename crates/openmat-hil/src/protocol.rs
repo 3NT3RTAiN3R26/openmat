@@ -2,6 +2,23 @@ use crate::HilError;
 
 pub const MAGIC: &[u8; 4] = b"OMAT";
 pub const VERSION: u8 = 1;
+/// Reject advertised payloads larger than this before allocating the body.
+pub const MAX_FRAME_PAYLOAD: usize = 16 * 1024 * 1024;
+/// Simultaneous TCP clients served by one agent.
+pub const MAX_TCP_CLIENTS: usize = 8;
+
+pub fn payload_len(header: &[u8]) -> Result<usize, crate::HilError> {
+    if header.len() < 14 {
+        return Err(crate::HilError::new("HIL frame header is too short"));
+    }
+    let len = u32::from_le_bytes(header[10..14].try_into().unwrap()) as usize;
+    if len > MAX_FRAME_PAYLOAD {
+        return Err(crate::HilError::new(format!(
+            "HIL frame payload of {len} bytes exceeds the limit of {MAX_FRAME_PAYLOAD}"
+        )));
+    }
+    Ok(len)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

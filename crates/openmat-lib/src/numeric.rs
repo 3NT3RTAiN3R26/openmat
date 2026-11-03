@@ -166,28 +166,26 @@ fn reshape(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 fn sum(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
-    let dim = if args.len() >= 2 {
-        positive(real_scalar(args, 1)?)?
-    } else if m.rows == 1 {
-        2
-    } else {
-        1
-    };
-    reduce(&m, dim, 0.0, |a, b| a + b)
+    let dim = reduction_dim(&m, args)?;
+    reduce(&m, dim, |a, b| a + b)
 }
 
 fn mean(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
-    let dim = if args.len() >= 2 {
-        positive(real_scalar(args, 1)?)?
-    } else if m.rows == 1 {
-        2
-    } else {
-        1
-    };
-    let total = reduce(&m, dim, 0.0, |a, b| a + b)?.into_matrix()?;
+    let dim = reduction_dim(&m, args)?;
+    let total = reduce(&m, dim, |a, b| a + b)?.into_matrix()?;
     let n = if dim == 1 { m.rows } else { m.cols } as f64;
     Ok(Value::Matrix(total.map(|z| z / n)))
+}
+
+fn reduction_dim(m: &Matrix, args: &[Value]) -> MatResult<usize> {
+    if args.len() >= 2 {
+        positive(real_scalar(args, 1)?)
+    } else if m.rows == 1 {
+        Ok(2)
+    } else {
+        Ok(1)
+    }
 }
 
 fn min(session: &mut Session, args: &[Value]) -> MatResult<Value> {
@@ -250,13 +248,16 @@ fn sqrt(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 }
 
 fn sin(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    map_real(args, |v| Complex64::from(v.sin()))
+    let m = matrix_arg(args, 0)?;
+    Ok(Value::Matrix(m.map(|z| z.sin())))
 }
 fn cos(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    map_real(args, |v| Complex64::from(v.cos()))
+    let m = matrix_arg(args, 0)?;
+    Ok(Value::Matrix(m.map(|z| z.cos())))
 }
 fn tan(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    map_real(args, |v| Complex64::from(v.tan()))
+    let m = matrix_arg(args, 0)?;
+    Ok(Value::Matrix(m.map(|z| z.tan())))
 }
 fn exp(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
@@ -467,26 +468,41 @@ pub fn from_dmatrix(m: &DMatrix<f64>) -> Matrix {
     Matrix::from_reals(m.nrows(), m.ncols(), m.as_slice().to_vec())
 }
 
-fn reduce(m: &Matrix, dim: usize, init: f64, fold: impl Fn(f64, f64) -> f64) -> MatResult<Value> {
+fn reduce(
+    m: &Matrix,
+    dim: usize,
+    fold: impl Fn(Complex64, Complex64) -> Complex64,
+) -> MatResult<Value> {
+    let zero = Complex64::new(0.0, 0.0);
     if dim == 1 {
         let mut data = Vec::new();
         for c in 0..m.cols {
-            let mut acc = init;
+            let mut acc = zero;
             for r in 0..m.rows {
-                acc = fold(acc, m.get(r, c).re);
+                acc = fold(acc, m.get(r, c));
             }
             data.push(acc);
         }
-        Ok(row(data))
+        Ok(Value::Matrix(Matrix {
+            rows: 1,
+            cols: data.len(),
+            data,
+            logical: false,
+        }))
     } else {
         let mut data = Vec::new();
         for r in 0..m.rows {
-            let mut acc = init;
+            let mut acc = zero;
             for c in 0..m.cols {
-                acc = fold(acc, m.get(r, c).re);
+                acc = fold(acc, m.get(r, c));
             }
             data.push(acc);
         }
-        Ok(col(data))
+        Ok(Value::Matrix(Matrix {
+            rows: data.len(),
+            cols: 1,
+            data,
+            logical: false,
+        }))
     }
 }

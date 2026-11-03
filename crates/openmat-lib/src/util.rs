@@ -34,17 +34,26 @@ pub fn col(values: Vec<f64>) -> Value {
 }
 
 pub fn dim_pair(args: &[Value]) -> MatResult<(usize, usize)> {
-    if args.len() == 1 {
-        let n = positive(args[0].real_scalar()?)?;
-        Ok((n, n))
-    } else {
-        Ok((positive(args[0].real_scalar()?)?, positive(args[1].real_scalar()?)?))
+    match args.len() {
+        1 => {
+            let n = positive(args[0].real_scalar()?)?;
+            Ok((n, n))
+        }
+        2 => Ok((
+            positive(args[0].real_scalar()?)?,
+            positive(args[1].real_scalar()?)?,
+        )),
+        n => Err(MatError::new(format!(
+            "expected 1 or 2 dimension arguments, got {n}"
+        ))),
     }
 }
 
 pub fn positive(v: f64) -> MatResult<usize> {
-    if v < 0.0 || (v - v.round()).abs() > 1e-8 {
-        return Err(MatError::new(format!("expected a non-negative integer, got {v}")));
+    if !v.is_finite() || v < 0.0 || (v - v.round()).abs() > 1e-8 || v > usize::MAX as f64 {
+        return Err(MatError::new(format!(
+            "expected a non-negative integer, got {v}"
+        )));
     }
     Ok(v.round() as usize)
 }
