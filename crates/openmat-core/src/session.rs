@@ -29,6 +29,7 @@ pub struct Session {
     pub(crate) path_funcs: Vec<String>,
     pub(crate) path_scripts: HashMap<String, (PathBuf, Vec<Stmt>)>,
     pub(crate) path_errors: HashMap<String, String>,
+    pub(crate) path_lookup: HashMap<String, Option<PathBuf>>,
     /// The file being executed, for `mfilename`.
     pub current_file: Option<PathBuf>,
     pub figures: Vec<Figure>,
@@ -64,6 +65,7 @@ impl Session {
             path_funcs: Vec::new(),
             path_scripts: HashMap::new(),
             path_errors: HashMap::new(),
+            path_lookup: HashMap::new(),
             current_file: None,
             figures: vec![Figure::new()],
             current_figure: 0,

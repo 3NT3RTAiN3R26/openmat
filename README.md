@@ -83,7 +83,9 @@ Also available: `pwd`, `cd`, `fullfile`, `fileparts`, `pathsep`, `filesep`. Rela
 
 The CLI adds the folder of the script to the path. `openmat --cd script.m` changes into that folder instead. In the GUI, **Run** and **Step** ask whether to **Change Folder** or **Add to Path** when the script's folder is neither the current folder nor on the path. **Path...** in the toolbar edits the search path: reorder, remove, add a folder, and **Save**.
 
-Not supported yet: `private/`, `+package`, and `@class` folders.
+Folders named `private` hold functions that only files in the parent folder, and other files in that `private` folder, can call. They win over functions of the same name on the path. A `+pkg` folder is a package: `+pkg/fn.m` is called as `pkg.fn(...)`, and `+a/+b/fn.m` as `a.b.fn(...)`. The extra functions in a function file are local to that file.
+
+Not supported yet: `@class` folders.
 
 ## HIL
 

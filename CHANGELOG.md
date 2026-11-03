@@ -2,6 +2,12 @@
 
 Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch releases.
 
+## 0.2.1
+
+- `private/` folders: functions in them are visible only to files in the parent folder and to each other, and win over path functions of the same name.
+- `+package` folders: `pkg.fn(...)`, nested `a.b.fn(...)`, and `pkg.fn` without parentheses.
+- Local functions of a function file are private to that file. Two files can now define a local function with the same name.
+
 ## 0.2.0
 
 - Search path: `.m` files in the current folder and on the path are found as functions and scripts.
