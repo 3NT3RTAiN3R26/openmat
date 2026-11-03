@@ -2,6 +2,12 @@
 
 Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch releases.
 
+## Unreleased (0.3.0, Signal Processing Toolbox)
+
+- Windows: `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser`, `gausswin`, `tukeywin`.
+- Basics: `nextpow2`, `fftshift`, `ifftshift`, `sinc`, `angle`, `cumsum`, `diff`, `unwrap`, `detrend`, `hilbert`, `xcorr`.
+- Polynomials: `polyval`, `poly`, `roots`, `deconv`.
+
 ## 0.2.1
 
 - `private/` folders: functions in them are visible only to files in the parent folder and to each other, and win over path functions of the same name.
