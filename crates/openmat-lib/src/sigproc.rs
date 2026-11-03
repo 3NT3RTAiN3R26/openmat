@@ -82,11 +82,14 @@ fn rectwin(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 }
 
 fn bartlett(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    let (n, periodic) = window_len(args)?;
+    if args.len() > 1 {
+        return Err(MatError::new("bartlett takes only the window length"));
+    }
+    let (n, _) = window_len(args)?;
     if n <= 1 {
         return Ok(col(vec![1.0; n]));
     }
-    let denominator = if periodic { n as f64 } else { (n - 1) as f64 };
+    let denominator = (n - 1) as f64;
     Ok(col(
         (0..n)
             .map(|i| 1.0 - (2.0 * i as f64 / denominator - 1.0).abs())
@@ -190,15 +193,28 @@ fn nextpow2(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     Ok(Value::Matrix(m.map(|z| {
         let magnitude = z.norm();
-        Complex64::from(if magnitude == 0.0 { 0.0 } else { magnitude.log2().ceil() })
+        Complex64::from(if magnitude == 0.0 {
+            0.0
+        } else {
+            let exponent = magnitude.log2().ceil();
+            if exponent.exp2() < magnitude {
+                exponent + 1.0
+            } else {
+                exponent
+            }
+        })
     })))
 }
 
 fn sinc(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     Ok(Value::Matrix(m.map(|z| {
-        let x = z.re;
-        Complex64::from(if x == 0.0 { 1.0 } else { (PI * x).sin() / (PI * x) })
+        if z == Complex64::new(0.0, 0.0) {
+            Complex64::new(1.0, 0.0)
+        } else {
+            let x = z * PI;
+            x.sin() / x
+        }
     })))
 }
 
@@ -233,13 +249,14 @@ fn dim_arg(args: &[Value], index: usize, m: &Matrix) -> MatResult<usize> {
 fn along(
     m: &Matrix,
     dim: usize,
+    empty_rows: usize,
     f: impl Fn(&[Complex64]) -> Vec<Complex64>,
 ) -> MatResult<Matrix> {
     if dim == 2 {
-        return Ok(along(&m.transpose(false), 1, f)?.transpose(false));
+        return Ok(along(&m.transpose(false), 1, empty_rows, f)?.transpose(false));
     }
     let mut data = Vec::new();
-    let mut rows = 0;
+    let mut rows = empty_rows;
     for c in 0..m.cols {
         let out = f(&m.data[c * m.rows..(c + 1) * m.rows]);
         rows = out.len();
@@ -256,7 +273,8 @@ fn along(
 fn cumsum(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     let dim = dim_arg(args, 1, &m)?;
-    Ok(Value::Matrix(along(&m, dim, |x| {
+    let rows = if dim == 1 { m.rows } else { m.cols };
+    Ok(Value::Matrix(along(&m, dim, rows, |x| {
         let mut total = Complex64::new(0.0, 0.0);
         x.iter()
             .map(|v| {
@@ -272,7 +290,10 @@ fn diff(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let order = if args.len() >= 2 { positive(real_scalar(args, 1)?)? } else { 1 };
     let dim = dim_arg(args, 2, &m)?;
     for _ in 0..order {
-        m = along(&m, dim, |x| x.windows(2).map(|w| w[1] - w[0]).collect())?;
+        let rows = if dim == 1 { m.rows } else { m.cols }.saturating_sub(1);
+        m = along(&m, dim, rows, |x| {
+            x.windows(2).map(|w| w[1] - w[0]).collect()
+        })?;
     }
     Ok(Value::Matrix(m))
 }
@@ -337,7 +358,8 @@ fn unwrap(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     let cutoff = if args.len() >= 2 { real_scalar(args, 1)? } else { PI };
     let dim = dim_arg(args, 2, &m)?;
-    Ok(Value::Matrix(along(&m, dim, |x| {
+    let rows = if dim == 1 { m.rows } else { m.cols };
+    Ok(Value::Matrix(along(&m, dim, rows, |x| {
         let reals: Vec<f64> = x.iter().map(|z| z.re).collect();
         unwrap_reals(&reals, cutoff)
             .into_iter()
@@ -350,11 +372,15 @@ fn unwrap(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 fn deconv(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
-    let y = matrix_arg(args, 0)?.reals()?;
+    let y_matrix = matrix_arg(args, 0)?;
+    let y = y_matrix.reals()?;
     let a = matrix_arg(args, 1)?.reals()?;
     if a.is_empty() || a[0] == 0.0 {
         return Err(MatError::new("deconv divisor a(1) must be non-zero"));
     }
+    // The outputs are columns when the dividend is a column vector, otherwise rows.
+    let column = y_matrix.cols == 1 && y_matrix.rows > 1;
+    let oriented = |values: Vec<f64>| if column { col(values) } else { row(values) };
     let (quotient, remainder) = if y.len() < a.len() {
         (vec![0.0], y)
     } else {
@@ -370,9 +396,9 @@ fn deconv(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         (quotient, remainder)
     };
     if session.nargout >= 2 {
-        Ok(Value::Multi(vec![row(quotient), row(remainder)]))
+        Ok(Value::Multi(vec![oriented(quotient), oriented(remainder)]))
     } else {
-        Ok(row(quotient))
+        Ok(oriented(quotient))
     }
 }
 
@@ -396,7 +422,7 @@ fn poly(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     } else {
         return Err(MatError::new("poly needs a vector or a square matrix"));
     };
-    Ok(coefficient_row(poly_from_roots(&zeros)))
+    Ok(coefficient_row(poly_from_roots(&zeros), conjugate_closed(&zeros)))
 }
 
 /// Coefficients, highest power first, of the monic polynomial with the given roots.
@@ -413,10 +439,27 @@ pub(crate) fn poly_from_roots(zeros: &[Complex64]) -> Vec<Complex64> {
     coeff
 }
 
-/// A row vector that is real when the imaginary parts are rounding noise.
-pub(crate) fn coefficient_row(coeff: Vec<Complex64>) -> Value {
-    let scale = coeff.iter().map(|c| c.norm()).fold(1.0, f64::max);
-    if coeff.iter().all(|c| c.im.abs() <= 1e-10 * scale) {
+/// True when every non-real root has its complex conjugate among the roots.
+pub(crate) fn conjugate_closed(roots: &[Complex64]) -> bool {
+    let mut unmatched: Vec<Complex64> = roots.iter().copied().filter(|r| r.im != 0.0).collect();
+    while let Some(root) = unmatched.pop() {
+        let close = |other: &Complex64| {
+            let tolerance = 1e-9 * (1.0 + root.norm());
+            (other.re - root.re).abs() <= tolerance && (other.im + root.im).abs() <= tolerance
+        };
+        match unmatched.iter().position(close) {
+            Some(partner) => {
+                unmatched.swap_remove(partner);
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
+/// A row vector of the coefficients. `real` drops the imaginary parts, which are then rounding noise.
+pub(crate) fn coefficient_row(coeff: Vec<Complex64>, real: bool) -> Value {
+    if real {
         return row(coeff.iter().map(|c| c.re).collect());
     }
     Value::Matrix(Matrix {
@@ -464,6 +507,12 @@ pub(crate) fn polynomial_roots(coefficients: &[f64]) -> MatResult<Vec<Complex64>
         }
     };
     found.extend(std::iter::repeat_n(Complex64::new(0.0, 0.0), trailing));
+    // MATLAB lists the member with the positive imaginary part first.
+    for i in 0..found.len().saturating_sub(1) {
+        if found[i].im < 0.0 && found[i + 1] == found[i].conj() {
+            found.swap(i, i + 1);
+        }
+    }
     Ok(found)
 }
 
@@ -497,7 +546,8 @@ fn analytic_signal(x: &[Complex64]) -> Vec<Complex64> {
 fn hilbert(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     let dim = default_dim(&m);
-    Ok(Value::Matrix(along(&m, dim, analytic_signal)?))
+    let rows = if dim == 1 { m.rows } else { m.cols };
+    Ok(Value::Matrix(along(&m, dim, rows, analytic_signal)?))
 }
 
 fn detrend_reals(y: &[f64], order: usize) -> MatResult<Vec<f64>> {
@@ -538,7 +588,8 @@ fn detrend(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         Some(value) => positive(value.real_scalar()?)?,
     };
     let dim = default_dim(&m);
-    let result = along(&m, dim, |x| {
+    let rows = if dim == 1 { m.rows } else { m.cols };
+    let result = along(&m, dim, rows, |x| {
         let re: Vec<f64> = x.iter().map(|z| z.re).collect();
         let im: Vec<f64> = x.iter().map(|z| z.im).collect();
         match (detrend_reals(&re, order), detrend_reals(&im, order)) {
@@ -581,6 +632,9 @@ pub(crate) fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
             other => numeric.push(other),
         }
     }
+    if numeric.is_empty() {
+        return Err(MatError::new("xcorr needs a numeric input vector"));
+    }
     let x = numeric[0].clone().into_matrix()?;
     let (second, max_lag) = match numeric.len() {
         1 => (None, None),
@@ -599,6 +653,11 @@ pub(crate) fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         return Err(MatError::new("xcorr supports vectors only"));
     }
     let y = second.as_ref().unwrap_or(&x);
+    if x.numel() != y.numel() && !matches!(scale, XcorrScale::None) {
+        return Err(MatError::new(
+            "Scale option must be 'none' for input vectors of different lengths.",
+        ));
+    }
     let n = x.numel().max(y.numel());
     let pad = |v: &Matrix| {
         let mut data = v.data.clone();
@@ -611,7 +670,7 @@ pub(crate) fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         None => n.saturating_sub(1),
     };
     let energy = |v: &[Complex64]| v.iter().map(|z| z.norm_sqr()).sum::<f64>();
-    let coeff_norm = (energy(&xs) * energy(&ys)).sqrt();
+    let coeff_norm = energy(&xs).sqrt() * energy(&ys).sqrt();
     let mut values = Vec::with_capacity(2 * max_lag + 1);
     let mut lags = Vec::with_capacity(2 * max_lag + 1);
     for lag in -(max_lag as i64)..=(max_lag as i64) {
@@ -695,6 +754,67 @@ mod tests {
     }
 
     #[test]
+    fn matches_matlab_r2025a_reference_values() {
+        assert_close(
+            &reals("w = kaiser(7, 3.2);", "w"),
+            &[0.173997555235272, 0.524660852056094, 0.861022193923715, 1.0, 0.861022193923715, 0.524660852056094, 0.173997555235272],
+        );
+        assert_close(
+            &reals("w = gausswin(7, 2.1);", "w"),
+            &[0.110250525304485, 0.375311098851399, 0.782704538241868, 1.0, 0.782704538241868, 0.375311098851399, 0.110250525304485],
+        );
+        assert_close(
+            &reals("w = tukeywin(8, 0.3);", "w"),
+            &[0.0, 0.994415413112564, 1.0, 1.0, 1.0, 1.0, 0.994415413112564, 0.0],
+        );
+        assert_close(&reals("w = tukeywin(7, 0.5);", "w"), &[0.0, 0.75, 1.0, 1.0, 1.0, 0.75, 0.0]);
+        assert_close(
+            &reals("w = hann(5, 'periodic');", "w"),
+            &[0.0, 0.345491502812526, 0.904508497187474, 0.904508497187474, 0.345491502812526],
+        );
+        assert_close(&reals("w = hamming(6, 'periodic');", "w"), &[0.08, 0.31, 0.77, 1.0, 0.77, 0.31]);
+        assert_close(
+            &reals("w = blackman(6);", "w"),
+            &[0.0, 0.20077014326253, 0.849229856737469, 0.849229856737469, 0.20077014326253, 0.0],
+        );
+        assert_close(&reals("w = bartlett(6);", "w"), &[0.0, 0.4, 0.8, 0.8, 0.4, 0.0]);
+        assert!(crate::exec("w = bartlett(5, 'periodic');").is_err());
+        assert_close(
+            &reals("y = unwrap([0 4 8 12 -2 3]);", "y"),
+            &[0.0, -2.28318530717959, -4.56637061435917, -6.84955592153876, -8.28318530717959, -9.56637061435917],
+        );
+        assert_close(
+            &reals("y = detrend([1 2 4 8 7 3], 2);", "y"),
+            &[1.10714285714286, -1.36428571428571, -1.51428571428571, 1.65714285714286, 1.15, -1.03571428571428],
+        );
+        assert_close(
+            &reals("y = detrend([1 2 4 8 7 3], 'constant');", "y"),
+            &[-3.16666666666667, -2.16666666666667, -0.166666666666667, 3.83333333333333, 2.83333333333333, -1.16666666666667],
+        );
+        for (src, want) in [
+            (
+                "z = imag(hilbert([1 3 2 5 4]));",
+                vec![0.179611190631834, -0.470228201833978, -0.795147898066885, -1.52169042607225, 2.60745533534128],
+            ),
+            (
+                "z = imag(hilbert([1 3 2 5 4 6]));",
+                vec![1.73205080756888, -0.577350269189626, -1.15470053837925, -1.15470053837925, -0.577350269189626, 1.73205080756888],
+            ),
+        ] {
+            assert_close(&reals(src, "z"), &want);
+        }
+        assert_close(&reals("c = xcorr([1 2 3 4], [1 -1 2]);", "c"), &[0.0, 2.0, 3.0, 5.0, 7.0, -1.0, 4.0]);
+        assert_close(&reals("[c, l] = xcorr([1 2 3 4], [1 -1 2]);", "l"), &[-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]);
+        let err = crate::exec("c = xcorr([1 2 3 4], [1 -1 2], 3, 'unbiased');").err().expect("error");
+        assert!(err.to_string().contains("Scale option must be 'none'"), "{err}");
+        assert_close(&reals("y = nextpow2([0.3 1 3 1000 -7]);", "y"), &[-1.0, 0.0, 2.0, 10.0, 3.0]);
+        assert_close(&reals("y = poly([1 2; 3 4]);", "y"), &[1.0, -5.0, -2.0]);
+        assert_close(&reals("y = polyval([1 2 3], [1 2; 3 4]);", "y"), &[6.0, 18.0, 11.0, 27.0]);
+        assert_close(&reals("y = ifftshift([1 2 3 4 5; 6 7 8 9 10]);", "y"), &[8.0, 3.0, 9.0, 4.0, 10.0, 5.0, 6.0, 1.0, 7.0, 2.0]);
+        assert_close(&reals("q = deconv([1 2 3 4], [1 2]);", "q"), &[1.0, 0.0, 3.0]);
+    }
+
+    #[test]
     fn elementwise_helpers() {
         assert_close(&reals("y = nextpow2([1 2 3 1000 0.3 0]);", "y"), &[0.0, 1.0, 2.0, 10.0, -1.0, 0.0]);
         let sinc = reals("y = sinc([0 0.5 1]);", "y");
@@ -716,6 +836,26 @@ mod tests {
         assert_close(&reals("y = diff([1 4 9 16]);", "y"), &[3.0, 5.0, 7.0]);
         assert_close(&reals("y = diff([1 4 9 16], 2);", "y"), &[2.0, 2.0]);
         assert!(reals("y = diff(5);", "y").is_empty());
+    }
+
+    #[test]
+    fn signal_operations_preserve_empty_matrix_shapes() {
+        let session = exec(
+            "a = zeros(3, 0); c = cumsum(a); c2 = cumsum(a, 2); d = diff(a); d2 = diff(a, 1, 2); h = hilbert(a); u = unwrap(a); t = detrend(a);",
+        )
+        .unwrap();
+        for (name, shape) in [
+            ("c", (3, 0)),
+            ("c2", (3, 0)),
+            ("d", (2, 0)),
+            ("d2", (3, 0)),
+            ("h", (3, 0)),
+            ("u", (3, 0)),
+            ("t", (3, 0)),
+        ] {
+            let matrix = session.get(name).unwrap().clone().into_matrix().unwrap();
+            assert_eq!((matrix.rows, matrix.cols), shape, "{name}");
+        }
     }
 
     #[test]
