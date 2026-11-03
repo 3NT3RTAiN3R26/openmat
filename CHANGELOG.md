@@ -10,7 +10,7 @@ Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch
 - Filtering: `filter` with initial conditions, final state, dimension, and the shape of the input (it returned a column before), `filtic`, `filtfilt`, `sosfilt`.
 - Conversions: `sos2tf`, `zp2tf`, `tf2zp`. Responses: `freqs`, `grpdelay`, `impz`.
 - `conv` accepts `'full'`, `'same'`, `'valid'`. New: `cov`, `corrcoef`, `xcov`.
-- IIR design: `butter` (low, high, bandpass, stop, analog, `[z, p, k]`), `cheby1`, `cheby2`, `bilinear`, `iirnotch`, `iirpeak`. `butter` with one output returns `b` instead of an error.
+- IIR design: `butter` (low, high, bandpass, stop, analog, `[z, p, k]`), `cheby1`, `cheby2`, `bilinear`, `iirnotch`, `iirpeak`. `butter` with one output returns `b` instead of an error.\n- FIR design: `fir1` with high, bandpass, stop, multiband, window and scaling options, `firls`, `sgolay`, `sgolayfilt`, `gaussdesign`, `rcosdesign`.
 
 ## 0.2.1
 

@@ -1,6 +1,7 @@
 mod control;
 mod dsp;
 mod filt;
+mod fir;
 mod fixed;
 mod hilb;
 mod iir;
@@ -25,6 +26,7 @@ pub fn register(session: &mut Session) {
     sigproc::register(session);
     filt::register(session);
     iir::register(session);
+    fir::register(session);
     control::register(session);
     plotb::register(session);
     fixed::register(session);
