@@ -372,11 +372,15 @@ fn unwrap(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 fn deconv(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
-    let y = matrix_arg(args, 0)?.reals()?;
+    let y_matrix = matrix_arg(args, 0)?;
+    let y = y_matrix.reals()?;
     let a = matrix_arg(args, 1)?.reals()?;
     if a.is_empty() || a[0] == 0.0 {
         return Err(MatError::new("deconv divisor a(1) must be non-zero"));
     }
+    // The outputs are columns when the dividend is a column vector, otherwise rows.
+    let column = y_matrix.cols == 1 && y_matrix.rows > 1;
+    let oriented = |values: Vec<f64>| if column { col(values) } else { row(values) };
     let (quotient, remainder) = if y.len() < a.len() {
         (vec![0.0], y)
     } else {
@@ -392,9 +396,9 @@ fn deconv(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         (quotient, remainder)
     };
     if session.nargout >= 2 {
-        Ok(Value::Multi(vec![row(quotient), row(remainder)]))
+        Ok(Value::Multi(vec![oriented(quotient), oriented(remainder)]))
     } else {
-        Ok(row(quotient))
+        Ok(oriented(quotient))
     }
 }
 
@@ -503,6 +507,12 @@ pub(crate) fn polynomial_roots(coefficients: &[f64]) -> MatResult<Vec<Complex64>
         }
     };
     found.extend(std::iter::repeat_n(Complex64::new(0.0, 0.0), trailing));
+    // MATLAB lists the member with the positive imaginary part first.
+    for i in 0..found.len().saturating_sub(1) {
+        if found[i].im < 0.0 && found[i + 1] == found[i].conj() {
+            found.swap(i, i + 1);
+        }
+    }
     Ok(found)
 }
 
