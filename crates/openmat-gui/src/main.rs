@@ -96,6 +96,8 @@ struct OpenmatApp {
     command_pending: String,
     command_history: Vec<String>,
     command_history_pos: Option<usize>,
+    /// Set while the run dialog waits for an answer. Holds whether the run was a Step.
+    path_prompt: Option<bool>,
 }
 
 impl OpenmatApp {
@@ -122,6 +124,7 @@ impl OpenmatApp {
             command_pending: String::new(),
             command_history: Vec::new(),
             command_history_pos: None,
+            path_prompt: None,
         };
         if let Some(arg) = std::env::args().nth(1) {
             app.load_path(PathBuf::from(arg));
@@ -253,6 +256,7 @@ impl eframe::App for OpenmatApp {
 
         self.show_figure_windows(ctx);
         self.show_variable_window(ctx);
+        self.show_path_prompt(ctx);
     }
 }
 
@@ -1203,6 +1207,65 @@ impl OpenmatApp {
         }
     }
 
+    fn script_dir_outside_path(&self) -> Option<PathBuf> {
+        let dir = self.path.as_ref()?.parent()?;
+        let dir = std::path::absolute(dir).ok()?;
+        let same = |other: &std::path::Path| {
+            other.to_string_lossy().to_lowercase() == dir.to_string_lossy().to_lowercase()
+        };
+        let in_cwd = std::env::current_dir().map(|cwd| same(&cwd)).unwrap_or(false);
+        if in_cwd || self.session.search_path.iter().any(|known| same(known)) {
+            return None;
+        }
+        Some(dir)
+    }
+
+    fn show_path_prompt(&mut self, ctx: &egui::Context) {
+        let Some(step) = self.path_prompt else {
+            return;
+        };
+        let Some(dir) = self.script_dir_outside_path() else {
+            self.path_prompt = None;
+            return;
+        };
+        let mut choice = None;
+        egui::Window::new("Run script")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label("The script is not in the current folder or on the search path:");
+                ui.monospace(dir.display().to_string());
+                ui.horizontal(|ui| {
+                    if ui.button("Change Folder").clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.button("Add to Path").clicked() {
+                        choice = Some(false);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.path_prompt = None;
+                    }
+                });
+            });
+        let Some(change_folder) = choice else {
+            return;
+        };
+        self.path_prompt = None;
+        if change_folder {
+            match std::env::set_current_dir(&dir) {
+                Ok(()) => self.folder = dir,
+                Err(err) => {
+                    self.status = format!("cannot change into {}: {err}", dir.display());
+                    return;
+                }
+            }
+        } else {
+            self.session.search_path.insert(0, dir);
+        }
+        self.debug_run_or_continue(step);
+    }
+
     fn debug_run_or_continue(&mut self, step: bool) {
         if let Some(run) = &self.debug_run {
             if step {
@@ -1210,6 +1273,10 @@ impl OpenmatApp {
             } else {
                 run.ctl.request_continue();
             }
+            return;
+        }
+        if self.script_dir_outside_path().is_some() {
+            self.path_prompt = Some(step);
             return;
         }
         let ctl = DebugCtl::new(self.breakpoints.clone(), step);

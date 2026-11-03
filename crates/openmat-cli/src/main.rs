@@ -18,6 +18,9 @@ struct Cli {
     /// Evaluate one statement
     #[arg(short = 'e', long = "eval")]
     eval: Option<String>,
+    /// Change into the script's folder instead of adding it to the search path
+    #[arg(long = "cd")]
+    change_dir: bool,
 }
 
 fn main() -> ExitCode {
@@ -34,6 +37,17 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         };
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+            if cli.change_dir {
+                if let Err(err) = std::env::set_current_dir(&dir) {
+                    eprintln!("cannot change into {}: {err}", dir.display());
+                    return ExitCode::from(1);
+                }
+            } else {
+                session.search_path.push(dir);
+            }
+        }
         return finish(&mut session, &code);
     }
     if io::stdin().is_terminal() {

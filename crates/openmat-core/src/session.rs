@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::Stmt;
@@ -21,6 +22,11 @@ pub struct Session {
     pub vars: HashMap<String, Value>,
     pub funcs: HashMap<String, UserFunc>,
     pub builtins: HashMap<String, Builtin>,
+    /// Folders searched for `.m` files after the current folder, first entry first.
+    pub search_path: Vec<PathBuf>,
+    pub(crate) path_funcs: Vec<String>,
+    pub(crate) path_scripts: HashMap<String, Vec<Stmt>>,
+    pub(crate) path_errors: HashMap<String, String>,
     pub figures: Vec<Figure>,
     pub current_figure: usize,
     pub output: String,
@@ -50,6 +56,10 @@ impl Session {
             vars: HashMap::new(),
             funcs: HashMap::new(),
             builtins: HashMap::new(),
+            search_path: Vec::new(),
+            path_funcs: Vec::new(),
+            path_scripts: HashMap::new(),
+            path_errors: HashMap::new(),
             figures: vec![Figure::new()],
             current_figure: 0,
             output: String::new(),

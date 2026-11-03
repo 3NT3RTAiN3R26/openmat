@@ -5,6 +5,7 @@ mod interp;
 mod lexer;
 mod parser;
 mod plot;
+mod searchpath;
 mod session;
 mod style;
 mod value;

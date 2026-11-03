@@ -19,11 +19,12 @@ enum Flow {
 impl Session {
     pub fn eval_source(&mut self, src: &str) -> MatResult<()> {
         self.output_homed = false;
+        self.unload_path_files();
         let program = parse(src)?;
         self.eval_program(&program)
     }
 
-    fn eval_program(&mut self, program: &[Stmt]) -> MatResult<()> {
+    pub(crate) fn eval_program(&mut self, program: &[Stmt]) -> MatResult<()> {
         for stmt in program {
             if let StmtKind::Function {
                 name,
@@ -65,7 +66,11 @@ impl Session {
         self.checkpoint(line)?;
         match &stmt.kind {
             StmtKind::Expr { expr, suppress } => {
-                let (value, invoked) = self.eval_statement_expr(expr)?;
+                let saved = self.nargout;
+                self.nargout = 0;
+                let evaluated = self.eval_statement_expr(expr);
+                self.nargout = saved;
+                let (value, invoked) = evaluated?;
                 let empty_call = invoked
                     && value
                         .as_matrix()
@@ -252,9 +257,7 @@ impl Session {
 
     fn eval_statement_expr(&mut self, expr: &Expr) -> MatResult<(Value, bool)> {
         if let Expr::Ident(name) = expr {
-            if self.get(name).is_none()
-                && (self.builtins.contains_key(name) || self.funcs.contains_key(name))
-            {
+            if self.get(name).is_none() && self.resolves(name) {
                 return Ok((self.call_named(name, &[])?, true));
             }
         }
@@ -267,17 +270,20 @@ impl Session {
             Expr::Number(v) => Ok(Value::scalar(*v)),
             Expr::Imag(v) => Ok(Value::complex(0.0, *v)),
             Expr::String(s) => Ok(Value::Char(s.clone())),
-            Expr::Ident(name) => self
-                .get(name)
-                .cloned()
-                .or_else(|| {
-                    if self.funcs.contains_key(name) || self.builtins.contains_key(name) {
-                        Some(Value::Func(FuncHandle::Named(name.clone())))
-                    } else {
-                        None
+            Expr::Ident(name) => {
+                if let Some(value) = self.get(name) {
+                    return Ok(value.clone());
+                }
+                if self.resolves(name) {
+                    // A bare namespace such as `hil` stays a handle so `hil.open` can qualify it.
+                    let namespace = format!("{name}.");
+                    if self.builtins.keys().any(|key| key.starts_with(&namespace)) {
+                        return Ok(Value::Func(FuncHandle::Named(name.clone())));
                     }
-                })
-                .ok_or_else(|| MatError::new(format!("undefined variable '{name}'"))),
+                    return self.call_named(name, &[]);
+                }
+                Err(MatError::new(format!("undefined variable '{name}'")))
+            }
             Expr::End => Ok(Value::scalar(self.end_index()?)),
             Expr::Colon => Err(MatError::new("bare ':' is only valid as an index")),
             Expr::Unary { op, expr } => {
@@ -471,21 +477,14 @@ impl Session {
 
     fn eval_call(&mut self, callee: &Expr, args: &[Expr]) -> MatResult<Value> {
         if let Some(name) = callable_name(callee) {
-            if self.get(&name).is_none()
-                && (self.builtins.contains_key(&name) || self.funcs.contains_key(&name))
-            {
+            if self.get(&name).is_none() && self.resolves(&name) {
                 return self.call_named(&name, args);
-            }
-            if let Expr::Ident(ident) = callee {
-                if self.get(ident).is_none() && (self.builtins.contains_key(ident) || self.funcs.contains_key(ident)) {
-                    return self.call_named(ident, args);
-                }
             }
         }
         if let Expr::Field { expr, field } = callee {
             if let Expr::Ident(name) = expr.as_ref() {
                 let qual = format!("{name}.{field}");
-                if self.builtins.contains_key(&qual) || self.funcs.contains_key(&qual) {
+                if self.resolves(&qual) {
                     return self.call_named(&qual, args);
                 }
             }
@@ -524,6 +523,11 @@ impl Session {
             self.nargout = 1;
             return out;
         }
+        if !self.funcs.contains_key(name) {
+            if let Some(result) = self.run_path_entry(name) {
+                return result;
+            }
+        }
         let user = self
             .funcs
             .get(name)
@@ -537,6 +541,11 @@ impl Session {
             FuncHandle::Named(name) => {
                 if let Some(func) = self.builtins.get(&name).copied() {
                     return func(self, args);
+                }
+                if !self.funcs.contains_key(&name) {
+                    if let Some(result) = self.run_path_entry(&name) {
+                        return result;
+                    }
                 }
                 let user = self
                     .funcs

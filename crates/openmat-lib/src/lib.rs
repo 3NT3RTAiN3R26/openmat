@@ -3,6 +3,7 @@ mod dsp;
 mod fixed;
 mod hilb;
 mod numeric;
+mod pathfn;
 mod plotb;
 mod text;
 mod util;
@@ -23,6 +24,7 @@ pub fn register(session: &mut Session) {
     fixed::register(session);
     text::register(session);
     hilb::register(session);
+    pathfn::register(session);
 }
 
 pub fn exec(src: &str) -> MatResult<Session> {
