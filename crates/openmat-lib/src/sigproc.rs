@@ -190,7 +190,16 @@ fn nextpow2(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     Ok(Value::Matrix(m.map(|z| {
         let magnitude = z.norm();
-        Complex64::from(if magnitude == 0.0 { 0.0 } else { magnitude.log2().ceil() })
+        Complex64::from(if magnitude == 0.0 {
+            0.0
+        } else {
+            let exponent = magnitude.log2().ceil();
+            if exponent.exp2() < magnitude {
+                exponent + 1.0
+            } else {
+                exponent
+            }
+        })
     })))
 }
 
