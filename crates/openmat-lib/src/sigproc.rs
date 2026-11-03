@@ -82,11 +82,14 @@ fn rectwin(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 }
 
 fn bartlett(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    let (n, periodic) = window_len(args)?;
+    if args.len() > 1 {
+        return Err(MatError::new("bartlett takes only the window length"));
+    }
+    let (n, _) = window_len(args)?;
     if n <= 1 {
         return Ok(col(vec![1.0; n]));
     }
-    let denominator = if periodic { n as f64 } else { (n - 1) as f64 };
+    let denominator = (n - 1) as f64;
     Ok(col(
         (0..n)
             .map(|i| 1.0 - (2.0 * i as f64 / denominator - 1.0).abs())
@@ -640,6 +643,11 @@ pub(crate) fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         return Err(MatError::new("xcorr supports vectors only"));
     }
     let y = second.as_ref().unwrap_or(&x);
+    if x.numel() != y.numel() && !matches!(scale, XcorrScale::None) {
+        return Err(MatError::new(
+            "Scale option must be 'none' for input vectors of different lengths.",
+        ));
+    }
     let n = x.numel().max(y.numel());
     let pad = |v: &Matrix| {
         let mut data = v.data.clone();
@@ -733,6 +741,67 @@ mod tests {
         assert!((tukey[0]).abs() < 1e-12 && (tukey[1] - 0.5).abs() < 1e-12 && tukey[4] == 1.0);
         assert_close(&reals("w = tukeywin(4, 1);", "w"), &reals("w = hann(4);", "w"));
         assert!(crate::exec("w = hann(4, 'nope');").is_err());
+    }
+
+    #[test]
+    fn matches_matlab_r2025a_reference_values() {
+        assert_close(
+            &reals("w = kaiser(7, 3.2);", "w"),
+            &[0.173997555235272, 0.524660852056094, 0.861022193923715, 1.0, 0.861022193923715, 0.524660852056094, 0.173997555235272],
+        );
+        assert_close(
+            &reals("w = gausswin(7, 2.1);", "w"),
+            &[0.110250525304485, 0.375311098851399, 0.782704538241868, 1.0, 0.782704538241868, 0.375311098851399, 0.110250525304485],
+        );
+        assert_close(
+            &reals("w = tukeywin(8, 0.3);", "w"),
+            &[0.0, 0.994415413112564, 1.0, 1.0, 1.0, 1.0, 0.994415413112564, 0.0],
+        );
+        assert_close(&reals("w = tukeywin(7, 0.5);", "w"), &[0.0, 0.75, 1.0, 1.0, 1.0, 0.75, 0.0]);
+        assert_close(
+            &reals("w = hann(5, 'periodic');", "w"),
+            &[0.0, 0.345491502812526, 0.904508497187474, 0.904508497187474, 0.345491502812526],
+        );
+        assert_close(&reals("w = hamming(6, 'periodic');", "w"), &[0.08, 0.31, 0.77, 1.0, 0.77, 0.31]);
+        assert_close(
+            &reals("w = blackman(6);", "w"),
+            &[0.0, 0.20077014326253, 0.849229856737469, 0.849229856737469, 0.20077014326253, 0.0],
+        );
+        assert_close(&reals("w = bartlett(6);", "w"), &[0.0, 0.4, 0.8, 0.8, 0.4, 0.0]);
+        assert!(crate::exec("w = bartlett(5, 'periodic');").is_err());
+        assert_close(
+            &reals("y = unwrap([0 4 8 12 -2 3]);", "y"),
+            &[0.0, -2.28318530717959, -4.56637061435917, -6.84955592153876, -8.28318530717959, -9.56637061435917],
+        );
+        assert_close(
+            &reals("y = detrend([1 2 4 8 7 3], 2);", "y"),
+            &[1.10714285714286, -1.36428571428571, -1.51428571428571, 1.65714285714286, 1.15, -1.03571428571428],
+        );
+        assert_close(
+            &reals("y = detrend([1 2 4 8 7 3], 'constant');", "y"),
+            &[-3.16666666666667, -2.16666666666667, -0.166666666666667, 3.83333333333333, 2.83333333333333, -1.16666666666667],
+        );
+        for (src, want) in [
+            (
+                "z = imag(hilbert([1 3 2 5 4]));",
+                vec![0.179611190631834, -0.470228201833978, -0.795147898066885, -1.52169042607225, 2.60745533534128],
+            ),
+            (
+                "z = imag(hilbert([1 3 2 5 4 6]));",
+                vec![1.73205080756888, -0.577350269189626, -1.15470053837925, -1.15470053837925, -0.577350269189626, 1.73205080756888],
+            ),
+        ] {
+            assert_close(&reals(src, "z"), &want);
+        }
+        assert_close(&reals("c = xcorr([1 2 3 4], [1 -1 2]);", "c"), &[0.0, 2.0, 3.0, 5.0, 7.0, -1.0, 4.0]);
+        assert_close(&reals("[c, l] = xcorr([1 2 3 4], [1 -1 2]);", "l"), &[-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]);
+        let err = crate::exec("c = xcorr([1 2 3 4], [1 -1 2], 3, 'unbiased');").err().expect("error");
+        assert!(err.to_string().contains("Scale option must be 'none'"), "{err}");
+        assert_close(&reals("y = nextpow2([0.3 1 3 1000 -7]);", "y"), &[-1.0, 0.0, 2.0, 10.0, 3.0]);
+        assert_close(&reals("y = poly([1 2; 3 4]);", "y"), &[1.0, -5.0, -2.0]);
+        assert_close(&reals("y = polyval([1 2 3], [1 2; 3 4]);", "y"), &[6.0, 18.0, 11.0, 27.0]);
+        assert_close(&reals("y = ifftshift([1 2 3 4 5; 6 7 8 9 10]);", "y"), &[8.0, 3.0, 9.0, 4.0, 10.0, 5.0, 6.0, 1.0, 7.0, 2.0]);
+        assert_close(&reals("q = deconv([1 2 3 4], [1 2]);", "q"), &[1.0, 0.0, 3.0]);
     }
 
     #[test]
