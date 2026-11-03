@@ -27,6 +27,9 @@ pub fn register(session: &mut Session) {
         ("thd", thd),
         ("sfdr", sfdr),
         ("sinad", sinad),
+        ("stft", stft),
+        ("istft", istft),
+        ("pspectrum", pspectrum),
     ] {
         session.register_builtin(name, func);
     }
@@ -581,13 +584,7 @@ fn analyze_tones(x: &[f64], harmonics: usize) -> MatResult<Tones> {
     if n < 128 {
         return Err(MatError::new("the signal needs at least 128 samples"));
     }
-    let denominator = bessel_i0(KAISER_BETA);
-    let window: Vec<f64> = (0..n)
-        .map(|i| {
-            let r = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
-            bessel_i0(KAISER_BETA * (1.0 - r * r).max(0.0).sqrt()) / denominator
-        })
-        .collect();
+    let window = kaiser_window(n, KAISER_BETA);
     let sum: f64 = window.iter().sum();
     // Removing the windowed mean empties the DC lobe, so low-frequency tones stay detectable.
     let mean = x.iter().zip(&window).map(|(v, w)| v * w).sum::<f64>() / sum;
@@ -700,6 +697,350 @@ fn thd(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 fn sfdr(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let t = analyze_tones(&real_signal(args, 0)?, 6)?;
     Ok(db(t.fundamental / t.spur.max(t.fundamental * 1e-30)))
+}
+
+// Short-time Fourier transform and pspectrum
+
+fn kaiser_window(n: usize, beta: f64) -> Vec<f64> {
+    if n == 1 {
+        return vec![1.0];
+    }
+    let denominator = bessel_i0(beta);
+    (0..n)
+        .map(|i| {
+            let r = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
+            bessel_i0(beta * (1.0 - r * r).max(0.0).sqrt()) / denominator
+        })
+        .collect()
+}
+
+fn hann_periodic(n: usize) -> Vec<f64> {
+    (0..n)
+        .map(|i| 0.5 - 0.5 * (2.0 * PI * i as f64 / n as f64).cos())
+        .collect()
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Range {
+    Centered,
+    TwoSided,
+    OneSided,
+}
+
+struct StftOptions {
+    fs: Option<f64>,
+    window: Option<Vec<f64>>,
+    overlap: Option<usize>,
+    nfft: Option<usize>,
+    range: Range,
+    conjugate_symmetric: bool,
+}
+
+/// Parses `(x, [fs], 'Name', value, ...)` after the first argument.
+fn stft_options(args: &[Value]) -> MatResult<StftOptions> {
+    let mut options = StftOptions {
+        fs: None,
+        window: None,
+        overlap: None,
+        nfft: None,
+        range: Range::Centered,
+        conjugate_symmetric: false,
+    };
+    let mut rest = &args[1..];
+    if let Some(first) = rest.first() {
+        if !matches!(first, Value::Char(_)) {
+            let m = first.clone().into_matrix()?;
+            if m.numel() > 0 {
+                let fs = m.real_scalar()?;
+                if fs <= 0.0 {
+                    return Err(MatError::new("the sample rate must be positive"));
+                }
+                options.fs = Some(fs);
+            }
+            rest = &rest[1..];
+        }
+    }
+    if !rest.len().is_multiple_of(2) {
+        return Err(MatError::new("options must be name and value pairs"));
+    }
+    for pair in rest.chunks(2) {
+        let Value::Char(name) = &pair[0] else {
+            return Err(MatError::new("option names must be strings"));
+        };
+        let count = |v: &Value| -> MatResult<usize> {
+            let n = v.real_scalar()?;
+            if n < 0.0 || n.fract() != 0.0 {
+                return Err(MatError::new(format!(
+                    "{name} must be a nonnegative integer"
+                )));
+            }
+            Ok(n as usize)
+        };
+        match name.to_ascii_lowercase().as_str() {
+            "window" => options.window = Some(pair[1].clone().into_matrix()?.reals()?),
+            "overlaplength" => options.overlap = Some(count(&pair[1])?),
+            "fftlength" => options.nfft = Some(count(&pair[1])?),
+            "conjugatesymmetric" => options.conjugate_symmetric = pair[1].is_true()?,
+            "frequencyrange" => {
+                let Value::Char(range) = &pair[1] else {
+                    return Err(MatError::new("FrequencyRange must be a string"));
+                };
+                options.range = match range.to_ascii_lowercase().as_str() {
+                    "centered" => Range::Centered,
+                    "twosided" => Range::TwoSided,
+                    "onesided" => Range::OneSided,
+                    other => {
+                        return Err(MatError::new(format!("unknown frequency range '{other}'")))
+                    }
+                };
+            }
+            "method" => match &pair[1] {
+                Value::Char(m) if m.eq_ignore_ascii_case("wola") => {}
+                _ => return Err(MatError::new("only the 'wola' method is supported")),
+            },
+            other => return Err(MatError::new(format!("unknown option '{other}'"))),
+        }
+    }
+    Ok(options)
+}
+
+/// FFT bin of each output row and its frequency.
+fn stft_axis(p: &Params, range: Range) -> (Vec<usize>, Vec<f64>) {
+    let df = p.sample_rate() / p.nfft as f64;
+    let nonnegative = p.nfft / 2 + 1;
+    let bins: Vec<usize> = match range {
+        Range::Centered => (nonnegative..p.nfft).chain(0..nonnegative).collect(),
+        Range::TwoSided => (0..p.nfft).collect(),
+        Range::OneSided => (0..p.points(true)).collect(),
+    };
+    let freqs = bins
+        .iter()
+        .map(|&b| {
+            let k = if range == Range::Centered && b >= nonnegative {
+                b as f64 - p.nfft as f64
+            } else {
+                b as f64
+            };
+            k * df
+        })
+        .collect();
+    (bins, freqs)
+}
+
+fn stft(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 1)?;
+    let x = signal(args, 0)?;
+    let o = stft_options(args)?;
+    let window = o.window.unwrap_or_else(|| hann_periodic(128));
+    let len = window.len();
+    let nfft = o.nfft.unwrap_or(len);
+    if nfft < len {
+        return Err(MatError::new(format!(
+            "Expected FFTLength to be a scalar with value >= {len}."
+        )));
+    }
+    let overlap = o.overlap.unwrap_or(len * 3 / 4);
+    if overlap >= len {
+        return Err(MatError::new(
+            "The number of samples to overlap must be less than the length of the window.",
+        ));
+    }
+    if x.len() < len {
+        return Err(MatError::new(format!(
+            "Input signal length must be greater than or equal to the window length, {len}."
+        )));
+    }
+    let p = Params {
+        window,
+        noverlap: overlap,
+        nfft,
+        fs: o.fs,
+    };
+    let hop = len - overlap;
+    let frames = (x.len() - overlap) / hop;
+    let (bins, freqs) = stft_axis(&p, o.range);
+    let plan = p.plan();
+    let mut s = Matrix::zeros(bins.len(), frames);
+    for i in 0..frames {
+        let spectrum = p.transform(&x[i * hop..i * hop + len], &plan);
+        for (row, &bin) in bins.iter().enumerate() {
+            s.set(row, i, spectrum[bin]);
+        }
+    }
+    let unit = o.fs.unwrap_or(1.0);
+    let times: Vec<f64> = (0..frames)
+        .map(|i| ((i * hop) as f64 + len as f64 / 2.0) / unit)
+        .collect();
+    Ok(outputs(
+        session,
+        vec![Value::Matrix(s), col(freqs), col(times)],
+    ))
+}
+
+fn istft(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 1)?;
+    let s = matrix_arg(args, 0)?;
+    let o = stft_options(args)?;
+    if s.numel() == 0 {
+        return Err(MatError::new("the spectrogram must not be empty"));
+    }
+    let rows = s.rows;
+    let mut nfft = match o.range {
+        Range::OneSided => 2 * (rows - 1),
+        _ => rows,
+    };
+    if let (Range::OneSided, Some(w)) = (o.range, &o.window) {
+        if w.len() == 2 * rows - 1 {
+            nfft = w.len();
+        }
+    }
+    let window = o.window.unwrap_or_else(|| hann_periodic(nfft));
+    let len = window.len();
+    if len > nfft {
+        return Err(MatError::new(
+            "the window must not be longer than the FFT length",
+        ));
+    }
+    let overlap = o.overlap.unwrap_or(len * 3 / 4);
+    if overlap >= len {
+        return Err(MatError::new(
+            "The number of samples to overlap must be less than the length of the window.",
+        ));
+    }
+    let hop = len - overlap;
+    let p = Params {
+        window,
+        noverlap: overlap,
+        nfft,
+        fs: o.fs,
+    };
+    let (bins, _) = stft_axis(&p, o.range);
+    if bins.len() != rows {
+        return Err(MatError::new(
+            "the number of rows does not match the FFT length and frequency range",
+        ));
+    }
+    let inverse = FftPlanner::new().plan_fft_inverse(nfft);
+    let total = (s.cols - 1) * hop + len;
+    let mut numerator = vec![Complex64::new(0.0, 0.0); total];
+    let mut weights = vec![0.0; total];
+    for frame in 0..s.cols {
+        let mut spectrum = vec![Complex64::new(0.0, 0.0); nfft];
+        for (row, &bin) in bins.iter().enumerate() {
+            spectrum[bin] = s.get(row, frame);
+        }
+        if o.range == Range::OneSided {
+            for k in rows..nfft {
+                spectrum[k] = spectrum[nfft - k].conj();
+            }
+        }
+        inverse.process(&mut spectrum);
+        for j in 0..len {
+            numerator[frame * hop + j] += spectrum[j] / nfft as f64 * p.window[j];
+            weights[frame * hop + j] += p.window[j] * p.window[j];
+        }
+    }
+    let y: Vec<Complex64> = numerator
+        .iter()
+        .zip(&weights)
+        .map(|(v, w)| {
+            if *w > 1e-16 {
+                v / *w
+            } else {
+                Complex64::new(0.0, 0.0)
+            }
+        })
+        .collect();
+    let scale = y.iter().map(|z| z.norm()).fold(0.0, f64::max);
+    let imag = y.iter().map(|z| z.im.abs()).fold(0.0, f64::max);
+    let real = o.conjugate_symmetric || o.range == Range::OneSided || imag <= 1e-10 * scale;
+    let unit = o.fs.unwrap_or(1.0);
+    let times: Vec<f64> = (0..total).map(|i| i as f64 / unit).collect();
+    let y = if real {
+        col(y.iter().map(|z| z.re).collect())
+    } else {
+        complex_col(y)
+    };
+    Ok(outputs(session, vec![y, col(times)]))
+}
+
+const SPECTRUM_POINTS: usize = 4096;
+
+/// One-sided power spectrum on a grid of 4096 points with a Kaiser window of beta `40 (1 - leakage)`.
+fn pspectrum(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 1)?;
+    let x = real_signal(args, 0)?;
+    let mut fs = None;
+    let mut rest = &args[1..];
+    if let Some(Value::Matrix(m)) = rest.first() {
+        if m.numel() > 0 {
+            let value = m.real_scalar()?;
+            if value <= 0.0 {
+                return Err(MatError::new("the sample rate must be positive"));
+            }
+            fs = Some(value);
+        }
+        rest = &rest[1..];
+    }
+    let unit = fs.unwrap_or(2.0 * PI);
+    let mut leakage = 0.5;
+    let mut limits = (0.0, unit / 2.0);
+    let mut index = 0;
+    while index < rest.len() {
+        match &rest[index] {
+            Value::Char(name) if name.eq_ignore_ascii_case("power") => index += 1,
+            Value::Char(name) if name.eq_ignore_ascii_case("leakage") => {
+                let value = rest
+                    .get(index + 1)
+                    .ok_or_else(|| MatError::new("Leakage needs a value"))?;
+                leakage = value.real_scalar()?;
+                if !(0.0..=1.0).contains(&leakage) {
+                    return Err(MatError::new("Leakage must be between 0 and 1"));
+                }
+                index += 2;
+            }
+            Value::Char(name) if name.eq_ignore_ascii_case("frequencylimits") => {
+                let value = rest
+                    .get(index + 1)
+                    .ok_or_else(|| MatError::new("FrequencyLimits needs a value"))?
+                    .clone()
+                    .into_matrix()?
+                    .reals()?;
+                if value.len() != 2
+                    || value[0] >= value[1]
+                    || value[0] < 0.0
+                    || value[1] > unit / 2.0
+                {
+                    return Err(MatError::new(
+                        "FrequencyLimits must be [f1 f2] with 0 <= f1 < f2 <= fs/2",
+                    ));
+                }
+                limits = (value[0], value[1]);
+                index += 2;
+            }
+            _ => return Err(MatError::new("unsupported pspectrum option")),
+        }
+    }
+    let n = x.len();
+    let window = kaiser_window(n, 40.0 * (1.0 - leakage));
+    let sum: f64 = window.iter().sum();
+    let weighted: Vec<f64> = x.iter().zip(&window).map(|(v, w)| v * w).collect();
+    let step = (limits.1 - limits.0) / (SPECTRUM_POINTS - 1) as f64;
+    let mut freqs = Vec::with_capacity(SPECTRUM_POINTS);
+    let mut power = Vec::with_capacity(SPECTRUM_POINTS);
+    for k in 0..SPECTRUM_POINTS {
+        let f = limits.0 + k as f64 * step;
+        let omega = 2.0 * PI * f / unit;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, v) in weighted.iter().enumerate() {
+            let (sin, cos) = (omega * i as f64).sin_cos();
+            re += v * cos;
+            im -= v * sin;
+        }
+        freqs.push(f);
+        power.push(2.0 * (re * re + im * im) / (sum * sum));
+    }
+    Ok(outputs(session, vec![col(power), col(freqs)]))
 }
 
 #[cfg(test)]
@@ -1059,6 +1400,233 @@ mod tests {
             assert!(err.contains(text), "{src}: {err}");
         }
         assert!(crate::exec("p = periodogram([1 2 3 4], [], 0);").is_err());
+    }
+
+    const STFT_SETUP: &str = "n = (0:999)'; xs = sin(2*pi*50*n/1000); x2 = xs + 0.3*cos(2*pi*123.4*n/1000 + 0.5); x3 = x2 + 1i*cos(2*pi*10*n/1000);";
+
+    /// Values from MATLAB R2025a (Signal Processing Toolbox 25.1).
+    #[test]
+    fn stft_istft_pspectrum_match_matlab_reference() {
+        let cases: &[(&str, &[f64])] = &[
+            (
+                r#"[s, f, t] = stft(x2, 1000); v = [size(s) f(1:3)' f(end) t(1:3)' t(end) abs(s(1:4,1))' angle(s(1:4,1))' abs(s(60:66,3))'];"#,
+                &[
+                    128.0,
+                    28.0,
+                    -492.1875,
+                    -484.375,
+                    -476.5625,
+                    500.0,
+                    0.064,
+                    0.096,
+                    0.128,
+                    0.928,
+                    1.88238272224841e-05,
+                    1.92612625111453e-05,
+                    1.99777172032962e-05,
+                    2.09571971463274e-05,
+                    0.109892866800951,
+                    0.216581439218997,
+                    0.317361636550117,
+                    0.410351138752962,
+                    0.845273546282068,
+                    0.26623366162958,
+                    0.115563120772834,
+                    0.0602600010709044,
+                    0.0438693371480315,
+                    0.0602600010709044,
+                    0.115563120772834,
+                ],
+            ),
+            (
+                r#"[s, f, t] = stft(x2); v = [size(s) f(1:2)' f(end) t(1:2)' abs(s(64:66,2))'];"#,
+                &[
+                    128.0,
+                    28.0,
+                    -3.09250526837745,
+                    -3.04341788316511,
+                    std::f64::consts::PI,
+                    64.0,
+                    96.0,
+                    0.0728812735816156,
+                    0.0854563958432042,
+                    0.134534477356345,
+                ],
+            ),
+            (
+                r#"[s, f, t] = stft(x2, 1000.0, 'FrequencyRange', 'onesided'); v = [size(s) f(end) abs(s(1:3,2))' angle(s(1:3,2))'];"#,
+                &[
+                    65.0,
+                    28.0,
+                    500.0,
+                    0.0728812735816156,
+                    0.0854563958432042,
+                    0.134534477356345,
+                    0.0,
+                    0.141840832978782,
+                    0.238360066816173,
+                ],
+            ),
+            (
+                r#"[s, f, t] = stft(x2, 1000.0, 'FrequencyRange', 'twosided'); v = [size(s) f(end) abs(s(126:128,2))'];"#,
+                &[
+                    128.0,
+                    28.0,
+                    992.1875,
+                    0.280354146920777,
+                    0.134534477356345,
+                    0.0854563958432042,
+                ],
+            ),
+            (
+                r#"[s, f, t] = stft(x2, 1000.0, 'Window', hamming(64), 'OverlapLength', 32.0, 'FFTLength', 256); v = [size(s) f(1:2)' t(1:2)' abs(s(126:130,3))'];"#,
+                &[
+                    256.0,
+                    30.0,
+                    -496.09375,
+                    -492.1875,
+                    0.032,
+                    0.064,
+                    0.0947492504681268,
+                    0.123648059483513,
+                    0.139082624416103,
+                    0.123648059483513,
+                    0.0947492504681268,
+                ],
+            ),
+            (
+                r#"[s, f] = stft(x2(1:990), 1000.0, 'FFTLength', 131); v = [size(s) f(1) f(end) abs(s(66:68,1))'];"#,
+                &[
+                    131.0,
+                    27.0,
+                    -496.18320610687,
+                    496.18320610687,
+                    0.0711245773327338,
+                    0.0838171500939229,
+                    0.132604665894381,
+                ],
+            ),
+            (
+                r#"[s, f] = stft(x3, 1000); v = [size(s) abs(s(60:66,2))'];"#,
+                &[
+                    128.0,
+                    28.0,
+                    1.13996201195534,
+                    2.39880762541502,
+                    22.7868224459111,
+                    29.7324649949843,
+                    18.6057677753849,
+                    29.6648917587719,
+                    22.9121480887276,
+                ],
+            ),
+            (
+                r#"s = stft(x2, 1000); [y, ty] = istft(s, 1000); v = [size(y) y(1:4)' y(500:503)' ty(end) max(abs(y(130:870) - x2(130:870)))];"#,
+                &[
+                    992.0,
+                    1.0,
+                    0.0,
+                    0.396368470455256,
+                    0.44927975820218,
+                    0.523829937442076,
+                    -0.475801719604962,
+                    0.0554318570929811,
+                    0.554978316300546,
+                    0.883674484012258,
+                    0.991,
+                    4.44089209850063e-16,
+                ],
+            ),
+            (
+                r#"s = stft(x2, 1000.0, 'FrequencyRange', 'onesided'); y = istft(s, 1000.0, 'FrequencyRange', 'onesided'); v = [numel(y) y(1:3)' max(abs(y(130:870) - x2(130:870)))];"#,
+                &[
+                    992.0,
+                    0.0,
+                    0.396368470455256,
+                    0.44927975820218,
+                    4.44089209850063e-16,
+                ],
+            ),
+            (
+                r#"s = stft(x3, 1000); y = istft(s, 1000); v = [numel(y) real(y(500)) imag(y(500)) max(abs(y(130:870) - x3(130:870)))];"#,
+                &[
+                    992.0,
+                    -0.475801719604962,
+                    0.998026728428272,
+                    6.68442777728834e-16,
+                ],
+            ),
+            (
+                r#"[p, f] = pspectrum(x2, 1000); v = [numel(p) f(2) f(end) max(p) p(408:413)' p(1008:1013)'];"#,
+                &[
+                    4096.0,
+                    0.122100122100122,
+                    500.0,
+                    0.499128840896729,
+                    0.478659454995499,
+                    0.492212646451621,
+                    0.499128840896729,
+                    0.499128840877235,
+                    0.492212646396448,
+                    0.47865945491393,
+                    0.0410106404566848,
+                    0.0428539216197012,
+                    0.0441573778106755,
+                    0.0448691969319342,
+                    0.044960682046352,
+                    0.0444281246812654,
+                ],
+            ),
+            (
+                r#"[p, f] = pspectrum(xs, 1000.0, 'Leakage', 0.2); v = [max(p) p(408:411)'];"#,
+                &[
+                    0.499444610832346,
+                    0.486295973091349,
+                    0.495023308174643,
+                    0.499444610832165,
+                    0.499444610832346,
+                ],
+            ),
+            (
+                r#"[p, f] = pspectrum(x2, 1000.0, 'FrequencyLimits', [0 200.0]); v = [numel(p) f(end) max(p)];"#,
+                &[4096.0, 200.0, 0.499965125598576],
+            ),
+            (
+                r#"[p, f] = pspectrum(x2); v = [f(2) f(end) max(p)];"#,
+                &[
+                    0.000767177693184321,
+                    std::f64::consts::PI,
+                    0.499128840896729,
+                ],
+            ),
+        ];
+        for (code, want) in cases {
+            let got = reals(&format!("{STFT_SETUP} {code}"), "v");
+            assert_eq!(got.len(), want.len(), "{code}");
+            for (g, w) in got.iter().zip(*want) {
+                assert!(
+                    (g - w).abs() <= 1e-7 * w.abs() + 1e-9,
+                    "{code}: {got:?} vs {want:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stft_errors_match_matlab_messages() {
+        for (src, text) in [
+            (
+                "s = stft(ones(100, 1), 1000);",
+                "Input signal length must be greater than or equal to the window length, 128.",
+            ),
+            (
+                "s = stft(ones(1000, 1), 1000, 'FFTLength', 64);",
+                "Expected FFTLength to be a scalar with value >= 128.",
+            ),
+        ] {
+            let err = crate::exec(src).err().unwrap().to_string();
+            assert!(err.contains(text), "{src}: {err}");
+        }
     }
 
     #[test]
