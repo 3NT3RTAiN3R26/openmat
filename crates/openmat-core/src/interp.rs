@@ -84,8 +84,9 @@ impl Session {
             } => {
                 let saved = self.nargout;
                 self.nargout = targets.len().max(1);
-                let value = self.eval(expr)?;
+                let value = self.eval(expr);
                 self.nargout = saved;
+                let value = value?;
                 if targets.len() == 1 {
                     self.assign(&targets[0], value.clone())?;
                     if !suppress {
@@ -502,7 +503,13 @@ impl Session {
         self.nargout = 1;
         let mut values = Vec::with_capacity(args.len());
         for arg in args {
-            values.push(self.eval(arg)?);
+            match self.eval(arg) {
+                Ok(value) => values.push(value),
+                Err(err) => {
+                    self.nargout = saved;
+                    return Err(err);
+                }
+            }
         }
         self.nargout = saved;
         Ok(values)
@@ -513,9 +520,9 @@ impl Session {
         let narg = self.nargout;
         if let Some(func) = self.builtins.get(name).copied() {
             self.nargout = narg;
-            let out = func(self, &values)?;
+            let out = func(self, &values);
             self.nargout = 1;
-            return Ok(out);
+            return out;
         }
         let user = self
             .funcs

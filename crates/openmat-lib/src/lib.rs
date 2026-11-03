@@ -121,6 +121,44 @@ mod tests {
     }
 
     #[test]
+    fn complex_trig_sum_mean_and_safe_dimensions() {
+        let z = var("s = sin(1i);", "s").into_matrix().unwrap();
+        assert!(z.get(0, 0).im.abs() > 0.1);
+        let sum = var("s = sum([1+1i 2+2i]);", "s").into_matrix().unwrap();
+        assert!((sum.get(0, 0).re - 3.0).abs() < 1e-9);
+        assert!((sum.get(0, 0).im - 3.0).abs() < 1e-9);
+        let col = var("m = [1+1i 2; 3 4+4i]; s = sum(m, 1);", "s")
+            .into_matrix()
+            .unwrap();
+        assert_eq!(col.rows, 1);
+        assert!((col.get(0, 0).re - 4.0).abs() < 1e-9);
+        assert!((col.get(0, 0).im - 1.0).abs() < 1e-9);
+        let mean = var("m = [1+1i, 3+3i]; s = mean(m, 2);", "s")
+            .into_matrix()
+            .unwrap();
+        assert!((mean.get(0, 0).re - 2.0).abs() < 1e-9);
+        assert!((mean.get(0, 0).im - 2.0).abs() < 1e-9);
+        let mut session = session();
+        let err = session.eval_source("zeros();").unwrap_err();
+        assert!(err.to_string().contains("dimension"), "{err}");
+        let err = session.eval_source("zeros(Inf);").unwrap_err();
+        assert!(err.to_string().contains("non-negative"), "{err}");
+    }
+
+    #[test]
+    fn failed_multi_output_does_not_stick_nargout() {
+        let mut session = session();
+        let err = session
+            .eval_source("[v, D] = eig([1 1; 0 2]);")
+            .unwrap_err();
+        assert!(err.to_string().contains("symmetric"), "{err}");
+        session.eval_source("size([1 2]);").unwrap();
+        let size = session.get("ans").unwrap().clone().into_matrix().unwrap();
+        assert_eq!((size.rows, size.cols), (1, 2));
+        assert_eq!(session.nargout, 1);
+    }
+
+    #[test]
     fn arithmetic_and_matrix_literals() {
         assert!((scalar("[1 -2; 3 4]; ans(1,2)") - -2.0).abs() < 1e-9);
         assert!((scalar("[1 - 2]") - -1.0).abs() < 1e-9);

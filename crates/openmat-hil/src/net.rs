@@ -34,7 +34,7 @@ pub fn read_frame(stream: &mut TcpStream) -> Result<Frame, HilError> {
     if &header[0..4] != crate::protocol::MAGIC {
         return Err(HilError::new("TCP HIL frame has a bad magic number"));
     }
-    let len = u32::from_le_bytes(header[10..14].try_into().unwrap()) as usize;
+    let len = crate::protocol::payload_len(&header)?;
     let mut rest = vec![0u8; len + 4];
     stream
         .read_exact(&mut rest)
