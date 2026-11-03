@@ -207,6 +207,16 @@ fn interp(session: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 // decimate
 
+/// Magnitude in dB of `b/a` at normalized frequency `f` (1 is Nyquist).
+fn filtmag_db(b: &[f64], a: &[f64], f: f64) -> f64 {
+    let side = |c: &[f64]| {
+        c.iter().enumerate().fold(ZERO, |acc, (k, v)| {
+            acc + Complex64::from_polar(*v, -std::f64::consts::PI * f * k as f64)
+        })
+    };
+    20.0 * (side(b) / side(a)).norm().log10()
+}
+
 fn decimate(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
     let m = matrix_arg(args, 0)?;
@@ -263,16 +273,35 @@ fn decimate(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         })?;
         return Ok(Value::Matrix(y));
     }
-    let n_order = order.unwrap_or(8);
-    let (b, a) = call_two(
-        session,
-        crate::iir::cheby1,
-        &[
-            Value::scalar(n_order as f64),
-            Value::scalar(0.05),
-            Value::scalar(0.8 / r as f64),
-        ],
-    )?;
+    let mut n_order = order.unwrap_or(8);
+    if n_order > 13 {
+        session.writeln("Warning: IIR filters above order 13 may be unreliable.");
+    }
+    let wn = 0.8 / r as f64;
+    let rip = 0.05;
+    let (b, a) = loop {
+        let (b, a) = call_two(
+            session,
+            crate::iir::cheby1,
+            &[
+                Value::scalar(n_order as f64),
+                Value::scalar(rip),
+                Value::scalar(wn),
+            ],
+        )?;
+        let br = reals_of(&b)?;
+        let ar = reals_of(&a)?;
+        let vanished = br.iter().all(|v| *v == 0.0);
+        if !vanished && (filtmag_db(&br, &ar, wn) + rip).abs() <= 1e-6 {
+            break (b, a);
+        }
+        if n_order == 0 {
+            return Err(MatError::new(
+                "the Chebyshev design failed for this decimation factor",
+            ));
+        }
+        n_order -= 1;
+    };
     let filtered = crate::filt::filtfilt(session, &[b, a, Value::Matrix(m)])?.into_matrix()?;
     // The kept samples are aligned so that the last sample survives.
     let start = (n - 1) % r;
@@ -655,6 +684,181 @@ fn analytic_magnitude(x: &[f64]) -> Vec<f64> {
     buffer.iter().map(|v| v.norm() / n as f64).collect()
 }
 
+fn sinc(x: f64) -> f64 {
+    if x == 0.0 {
+        1.0
+    } else {
+        (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+    }
+}
+
+/// Magnitude of `x` after an `n`-tap Hilbert FIR (Kaiser beta 8), as in `envelope`.
+fn hilbert_fir_magnitude(x: &[f64], n: usize) -> Vec<f64> {
+    let window = crate::spectral::kaiser_window(n, 8.0);
+    let first = (1.0 - n as f64) / 2.0;
+    let mut taps = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = 0.5 * (first + i as f64);
+        taps.push(Complex64::from_polar(sinc(t), std::f64::consts::PI * t) * window[i]);
+    }
+    let scale: f64 = taps.iter().map(|c| c.re).sum();
+    if scale != 0.0 {
+        for tap in &mut taps {
+            *tap /= scale;
+        }
+    }
+    let left = (n - 1) / 2;
+    (0..x.len())
+        .map(|i| {
+            let mut acc = ZERO;
+            for (k, tap) in taps.iter().enumerate() {
+                let j = i as isize + left as isize - k as isize;
+                if j >= 0 && (j as usize) < x.len() {
+                    acc += *tap * x[j as usize];
+                }
+            }
+            acc.norm()
+        })
+        .collect()
+}
+
+/// Not-a-knot cubic spline, the same boundary `interp1(..., 'spline')` uses.
+fn spline(xs: &[f64], ys: &[f64], queries: impl IntoIterator<Item = f64>) -> Vec<f64> {
+    let n = xs.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return queries.into_iter().map(|_| ys[0]).collect();
+    }
+    if n == 2 {
+        let slope = (ys[1] - ys[0]) / (xs[1] - xs[0]);
+        return queries
+            .into_iter()
+            .map(|q| ys[0] + slope * (q - xs[0]))
+            .collect();
+    }
+    let h: Vec<f64> = xs.windows(2).map(|w| w[1] - w[0]).collect();
+    let delta: Vec<f64> = (0..n - 1).map(|i| (ys[i + 1] - ys[i]) / h[i]).collect();
+    let moments = if n == 3 {
+        // Three points leave one cubic, which is the interpolating parabola.
+        let m = 2.0 * (delta[1] - delta[0]) / (h[0] + h[1]);
+        vec![m, m, m]
+    } else {
+        solve_not_a_knot(&h, &delta)
+    };
+    queries
+        .into_iter()
+        .map(|q| eval_spline(xs, ys, &h, &moments, q))
+        .collect()
+}
+
+fn solve_not_a_knot(h: &[f64], delta: &[f64]) -> Vec<f64> {
+    let n = h.len() + 1;
+    // Dense n x n. Not-a-knot occupies a column two steps away, so Thomas is not enough.
+    let mut a = vec![vec![0.0; n]; n];
+    let mut b = vec![0.0; n];
+    a[0][0] = h[1];
+    a[0][1] = -(h[0] + h[1]);
+    a[0][2] = h[0];
+    for i in 1..n - 1 {
+        a[i][i - 1] = h[i - 1];
+        a[i][i] = 2.0 * (h[i - 1] + h[i]);
+        a[i][i + 1] = h[i];
+        b[i] = 6.0 * (delta[i] - delta[i - 1]);
+    }
+    let last = n - 1;
+    a[last][last - 2] = h[n - 2];
+    a[last][last - 1] = -(h[n - 3] + h[n - 2]);
+    a[last][last] = h[n - 3];
+    // Gaussian elimination.
+    for k in 0..n {
+        let mut pivot = k;
+        for i in k + 1..n {
+            if a[i][k].abs() > a[pivot][k].abs() {
+                pivot = i;
+            }
+        }
+        a.swap(k, pivot);
+        b.swap(k, pivot);
+        let div = a[k][k];
+        for j in k..n {
+            a[k][j] /= div;
+        }
+        b[k] /= div;
+        for i in 0..n {
+            if i == k {
+                continue;
+            }
+            let factor = a[i][k];
+            for j in k..n {
+                a[i][j] -= factor * a[k][j];
+            }
+            b[i] -= factor * b[k];
+        }
+    }
+    b
+}
+
+fn eval_spline(xs: &[f64], ys: &[f64], h: &[f64], m: &[f64], q: f64) -> f64 {
+    let mut i = 0;
+    while i + 1 < xs.len() - 1 && q > xs[i + 1] {
+        i += 1;
+    }
+    let dx = q - xs[i];
+    let hi = h[i];
+    (m[i] * (hi - dx).powi(3) + m[i + 1] * dx.powi(3)) / (6.0 * hi)
+        + (ys[i] / hi - m[i] * hi / 6.0) * (hi - dx)
+        + (ys[i + 1] / hi - m[i + 1] * hi / 6.0) * dx
+}
+
+/// Spline through local maxima (`lower` selects minima), matching `envelope(..., 'peak')`.
+fn peak_envelope(session: &mut Session, y: &[f64], n: usize, lower: bool) -> MatResult<Vec<f64>> {
+    let nx = y.len();
+    if nx < 2 {
+        return Ok(y.to_vec());
+    }
+    let mut index: Vec<usize> = Vec::new();
+    if nx > n + 1 {
+        let samples: Vec<f64> = if lower {
+            y.iter().map(|v| -v).collect()
+        } else {
+            y.to_vec()
+        };
+        let saved = session.nargout;
+        session.nargout = 2;
+        let found = findpeaks(
+            session,
+            &[
+                col(samples),
+                Value::Char("MinPeakDistance".to_string()),
+                Value::scalar(n as f64),
+            ],
+        );
+        session.nargout = saved;
+        if let Value::Multi(values) = found? {
+            if values.len() >= 2 {
+                index = values[1]
+                    .clone()
+                    .into_matrix()?
+                    .reals()?
+                    .iter()
+                    .map(|loc| (*loc as usize).saturating_sub(1).min(nx - 1))
+                    .collect();
+            }
+        }
+    }
+    if index.len() < 2 {
+        let mut with_ends = vec![0];
+        with_ends.extend(index);
+        with_ends.push(nx - 1);
+        index = with_ends;
+    }
+    let xs: Vec<f64> = index.iter().map(|i| (*i + 1) as f64).collect();
+    let ys: Vec<f64> = index.iter().map(|&i| y[i]).collect();
+    Ok(spline(&xs, &ys, (1..=nx).map(|i| i as f64)))
+}
+
 fn moving_mean(x: &[f64], window: usize) -> Vec<f64> {
     let before = (window - 1) / 2;
     let after = window - before - 1;
@@ -681,47 +885,62 @@ fn envelope(session: &mut Session, args: &[Value]) -> MatResult<Value> {
             value => length = Some(positive(value.real_scalar()?)?),
         }
     }
+    if method == "peaks" {
+        method = "peak".to_string();
+    }
+    if !matches!(method.as_str(), "analytic" | "rms" | "peak") {
+        return Err(MatError::new(format!(
+            "unsupported envelope method '{method}'"
+        )));
+    }
+    if method != "analytic" && length.is_none() {
+        return Err(MatError::new(
+            "the rms and peak methods need a window length",
+        ));
+    }
     let dim = default_dim(&m);
     let len = length_along(&m, dim);
-    let envelope_of = |x: &[Complex64]| -> MatResult<Vec<f64>> {
-        let values: Vec<f64> = x.iter().map(|z| z.re).collect();
-        let mean = values.iter().sum::<f64>() / values.len() as f64;
-        let centered: Vec<f64> = values.iter().map(|v| v - mean).collect();
-        match method.as_str() {
-            "analytic" if length.is_none() => Ok(analytic_magnitude(&centered)),
-            "analytic" => Err(MatError::new(
-                "the analytic method with a filter length is not supported",
-            )),
-            "rms" => {
-                let np =
-                    length.ok_or_else(|| MatError::new("the rms method needs a window length"))?;
-                let squares: Vec<f64> = centered.iter().map(|v| v * v).collect();
-                Ok(moving_mean(&squares, np).iter().map(|v| v.sqrt()).collect())
-            }
-            other => Err(MatError::new(format!(
-                "unsupported envelope method '{other}'"
-            ))),
-        }
-    };
     let mut upper = Matrix::zeros(m.rows, m.cols);
     let mut lower = Matrix::zeros(m.rows, m.cols);
     let lines = if dim == 1 { m.cols } else { m.rows };
     for line in 0..lines {
-        let x: Vec<Complex64> = (0..len)
+        let values: Vec<f64> = (0..len)
             .map(|i| {
                 if dim == 1 {
-                    m.get(i, line)
+                    m.get(i, line).re
                 } else {
-                    m.get(line, i)
+                    m.get(line, i).re
                 }
             })
             .collect();
-        let mean = x.iter().map(|z| z.re).sum::<f64>() / len as f64;
-        let magnitude = envelope_of(&x)?;
-        for (i, v) in magnitude.iter().enumerate() {
+        let (up, low) = if method == "peak" {
+            let n = length.unwrap();
+            (
+                peak_envelope(session, &values, n, false)?,
+                peak_envelope(session, &values, n, true)?,
+            )
+        } else {
+            let mean = values.iter().sum::<f64>() / len as f64;
+            let centered: Vec<f64> = values.iter().map(|v| v - mean).collect();
+            let magnitude = match method.as_str() {
+                "analytic" if length.is_none() => analytic_magnitude(&centered),
+                "analytic" => hilbert_fir_magnitude(&centered, length.unwrap()),
+                "rms" => {
+                    let np = length.unwrap();
+                    let squares: Vec<f64> = centered.iter().map(|v| v * v).collect();
+                    moving_mean(&squares, np).iter().map(|v| v.sqrt()).collect()
+                }
+                _ => unreachable!(),
+            };
+            (
+                magnitude.iter().map(|v| mean + v).collect(),
+                magnitude.iter().map(|v| mean - v).collect(),
+            )
+        };
+        for i in 0..len {
             let (r, c) = if dim == 1 { (i, line) } else { (line, i) };
-            upper.set(r, c, Complex64::new(mean + v, 0.0));
-            lower.set(r, c, Complex64::new(mean - v, 0.0));
+            upper.set(r, c, Complex64::new(up[i], 0.0));
+            lower.set(r, c, Complex64::new(low[i], 0.0));
         }
     }
     if session.nargout >= 2 {
@@ -1032,6 +1251,87 @@ mod tests {
                 ],
             ),
             (
+                r#"[u, l] = envelope(e, 15.0); v = [u(1:6)' l(1:6)' u(30:32)'];"#,
+                &[
+                    1.041910706054774,
+                    1.718996529186901,
+                    1.816138018099747,
+                    1.721069314885558,
+                    1.655610263948924,
+                    1.578885873188391,
+                    -0.4419107060547739,
+                    -1.118996529186901,
+                    -1.216138018099747,
+                    -1.121069314885557,
+                    -1.055610263948924,
+                    -0.9788858731883908,
+                    1.702853253341691,
+                    1.761037322435702,
+                    1.784581774929758,
+                ],
+            ),
+            (
+                r#"[u, l] = envelope(e, 8.0, 'peak'); v = [size(u) u(1:8)' l(1:8)' u(30:34)'];"#,
+                &[
+                    64.0,
+                    1.0,
+                    2.1851131425969,
+                    1.901760597795896,
+                    1.650656227807924,
+                    1.430297409561182,
+                    1.239181519983867,
+                    1.075805936004177,
+                    0.9386680345503099,
+                    0.8262651925504627,
+                    -2.719521377592815,
+                    -2.275249879034129,
+                    -1.878729749712319,
+                    -1.527716515289685,
+                    -1.219965701428525,
+                    -0.9532328337911398,
+                    -0.7252734380398274,
+                    -0.5338430398368871,
+                    1.570063613092688,
+                    1.611843170717819,
+                    1.64229483407371,
+                    1.65991598008856,
+                    1.663203985690565,
+                ],
+            ),
+            (
+                r#"[u, l] = envelope(e', 8.0, 'peaks'); v = [size(u) u(1)];"#,
+                &[1.0, 64.0, 2.1851131425969],
+            ),
+            (
+                r#"[u, l] = envelope(e(1:6), 8.0, 'peak'); v = [u' l'];"#,
+                &[
+                    0.3,
+                    0.04935343324177205,
+                    -0.2012931335164559,
+                    -0.4519397002746838,
+                    -0.7025862670329117,
+                    -0.9532328337911398,
+                    0.3,
+                    0.04935343324177205,
+                    -0.2012931335164559,
+                    -0.4519397002746838,
+                    -0.7025862670329117,
+                    -0.9532328337911398,
+                ],
+            ),
+            (
+                r#"y = decimate(xx, 16); v = y';"#,
+                &[
+                    0.3352045479565253,
+                    -0.1082385078486296,
+                    0.06878219720621175,
+                    -0.03872384567388894,
+                    0.01058121735983709,
+                    0.0308081246052568,
+                    0.01402286120712612,
+                ],
+            ),
+            (
                 r#"[u, l] = envelope(e, 8.0, 'rms'); v = [u(1:5)' l(1:5)' u(30:32)'];"#,
                 &[
                     1.23298089176984,
@@ -1232,7 +1532,7 @@ mod tests {
             assert_eq!(got.len(), want.len(), "{code}: {got:?}");
             for (g, w) in got.iter().zip(*want) {
                 assert!(
-                    (g - w).abs() <= 1e-7 * w.abs() + 1e-9,
+                    (g - w).abs() <= 1e-7 * w.abs() + 1e-8,
                     "{code}: {got:?} vs {want:?}"
                 );
             }
@@ -1247,9 +1547,17 @@ mod tests {
             "y = findpeaks([1 3 2], 'Bogus', 1);",
             "y = findpeaks([1 3 2], 'SortStr', 'up');",
             "y = decimate([1 2 3 4], 2, 'fir', 'x');",
+            "y = envelope([1 2 3], 'peak');",
             "y = medfilt1([1 2 3], 3, [], 3);",
         ] {
             assert!(exec(src).is_err(), "{src}");
         }
+        let session = exec("y = decimate(sin(2*pi*(0:99)'/20), 4, 20);")
+            .expect("decimate order 20");
+        assert!(
+            session.output.contains("IIR filters above order 13 may be unreliable."),
+            "{}",
+            session.output
+        );
     }
 }

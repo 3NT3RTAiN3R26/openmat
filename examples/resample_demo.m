@@ -11,5 +11,6 @@ numel(u)
 numel(pks)
 m = medfilt1(x, 5);
 e = envelope(x);
+[up, lo] = envelope(x, 40, 'peak');
 X = fft2([16 2 3 13; 5 11 10 8; 9 7 6 12; 4 14 15 1]);
 abs(X(1, 1))
