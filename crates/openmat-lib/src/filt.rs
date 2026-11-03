@@ -188,7 +188,7 @@ fn steady_state(b: &[f64], a: &[f64]) -> MatResult<Vec<f64>> {
     Ok(solution.iter().copied().collect())
 }
 
-fn filtfilt(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+pub(crate) fn filtfilt(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 3)?;
     let (b, a) = normalized(&coefficients(args, 0)?, &coefficients(args, 1)?)?;
     let x = matrix_arg(args, 2)?;

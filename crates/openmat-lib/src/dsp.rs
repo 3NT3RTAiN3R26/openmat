@@ -2,12 +2,15 @@ use num_complex::Complex64;
 use openmat_core::{MatError, MatResult, Matrix, Session, Value};
 use rustfft::FftPlanner;
 
+use crate::sigproc::{along, default_dim};
 use crate::util::{col, matrix_arg, need, positive, real_scalar, row};
 
 pub fn register(session: &mut Session) {
     for (name, func) in [
         ("fft", fft as fn(&mut Session, &[Value]) -> MatResult<Value>),
         ("ifft", ifft),
+        ("fft2", fft2),
+        ("ifft2", ifft2),
         ("conv", conv),
     ] {
         session.register_builtin(name, func);
@@ -22,75 +25,112 @@ fn ifft(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     transform(args, false)
 }
 
+/// `(x, n, dim)`: an empty `n` keeps the length, `dim` defaults to the first non-singleton one.
 fn transform(args: &[Value], forward: bool) -> MatResult<Value> {
+    need(args, 1)?;
     let m = matrix_arg(args, 0)?;
-    let n_default = if m.rows == 1 { m.cols } else { m.rows };
-    let n = if args.len() >= 2 {
-        positive(real_scalar(args, 1)?)?
-    } else {
-        n_default
+    let dim = match args.get(2) {
+        Some(_) => {
+            let d = positive(real_scalar(args, 2)?)?;
+            if d != 1 && d != 2 {
+                return Err(MatError::new("dimension must be 1 or 2"));
+            }
+            d
+        }
+        None => default_dim(&m),
     };
-    if m.cols == 1 || m.rows == 1 {
-        let mut samples = m.data.clone();
-        samples.resize(n, Complex64::new(0.0, 0.0));
-        let out = fft_buf(&samples, forward);
-        return if m.rows == 1 {
-            Ok(Value::Matrix(Matrix {
-                rows: 1,
-                cols: n,
-                data: out,
-                logical: false,
-            }))
-        } else {
-            Ok(Value::Matrix(Matrix {
-                rows: n,
-                cols: 1,
-                data: out,
-                logical: false,
-            }))
-        };
-    }
-    let mut data = vec![Complex64::new(0.0, 0.0); n * m.cols];
-    for c in 0..m.cols {
-        let mut samples = vec![Complex64::new(0.0, 0.0); n];
-        for r in 0..m.rows.min(n) {
-            samples[r] = m.get(r, c);
-        }
-        let out = fft_buf(&samples, forward);
-        for r in 0..n {
-            data[c * n + r] = out[r];
-        }
-    }
-    Ok(Value::Matrix(Matrix {
-        rows: n,
-        cols: m.cols,
-        data,
-        logical: false,
+    let length = if dim == 1 { m.rows } else { m.cols };
+    let n = match args.get(1) {
+        Some(Value::Matrix(size)) if size.numel() == 0 => length,
+        Some(_) => positive(real_scalar(args, 1)?)?,
+        None => length,
+    };
+    Ok(Value::Matrix(along(&m, dim, n, |x| {
+        fft_buf(x, n, forward)
+    })?))
+}
+
+fn transform_2d(args: &[Value], forward: bool) -> MatResult<Value> {
+    need(args, 1)?;
+    let m = matrix_arg(args, 0)?;
+    let (rows, cols) = match (args.get(1), args.get(2)) {
+        (Some(_), Some(_)) => (
+            positive(real_scalar(args, 1)?)?,
+            positive(real_scalar(args, 2)?)?,
+        ),
+        (None, None) => (m.rows, m.cols),
+        _ => return Err(MatError::new("fft2 takes either X, or X with both sizes")),
+    };
+    let columns = along(&m, 1, rows, |x| fft_buf_raw(x, rows, forward))?;
+    let both = along(&columns, 2, cols, |x| fft_buf_raw(x, cols, forward))?;
+    Ok(Value::Matrix(if forward {
+        both
+    } else {
+        real_if_symmetric(both)
     }))
 }
 
-fn fft_buf(samples: &[Complex64], forward: bool) -> Vec<Complex64> {
+fn fft2(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    transform_2d(args, true)
+}
+
+fn ifft2(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    transform_2d(args, false)
+}
+
+/// Pads or truncates to `n` samples and transforms. An inverse transform is normalized.
+fn fft_buf_raw(samples: &[Complex64], n: usize, forward: bool) -> Vec<Complex64> {
+    let mut buf = samples.to_vec();
+    buf.resize(n, Complex64::new(0.0, 0.0));
     let mut planner = FftPlanner::<f64>::new();
     let algo = if forward {
-        planner.plan_fft_forward(samples.len())
+        planner.plan_fft_forward(n)
     } else {
-        planner.plan_fft_inverse(samples.len())
+        planner.plan_fft_inverse(n)
     };
-    let mut buf = samples.to_vec();
     algo.process(&mut buf);
     if !forward {
-        let scale = samples.len() as f64;
         for v in &mut buf {
-            *v /= scale;
-            if v.im.abs() < 1e-8 {
-                v.im = 0.0;
-            }
-            if v.re.abs() < 1e-8 {
-                v.re = 0.0;
-            }
+            *v /= n as f64;
         }
     }
     buf
+}
+
+fn fft_buf(samples: &[Complex64], n: usize, forward: bool) -> Vec<Complex64> {
+    let real_input = samples.iter().all(|z| z.im == 0.0);
+    let mut out = fft_buf_raw(samples, n, forward);
+    if forward && real_input {
+        // The spectrum of a real signal is conjugate symmetric, which makes ifft(fft(x)) real.
+        for k in 1..n.div_ceil(2) {
+            out[n - k] = out[k].conj();
+        }
+        out[0].im = 0.0;
+        if n.is_multiple_of(2) {
+            out[n / 2].im = 0.0;
+        }
+    }
+    if !forward {
+        let scale = out.iter().map(|z| z.norm()).fold(0.0, f64::max);
+        let imag = out.iter().map(|z| z.im.abs()).fold(0.0, f64::max);
+        if imag <= 1e-12 * scale {
+            for v in &mut out {
+                v.im = 0.0;
+            }
+        }
+    }
+    out
+}
+
+fn real_if_symmetric(mut m: Matrix) -> Matrix {
+    let scale = m.data.iter().map(|z| z.norm()).fold(0.0, f64::max);
+    let imag = m.data.iter().map(|z| z.im.abs()).fold(0.0, f64::max);
+    if imag <= 1e-12 * scale {
+        for v in &mut m.data {
+            v.im = 0.0;
+        }
+    }
+    m
 }
 
 fn conv(_: &mut Session, args: &[Value]) -> MatResult<Value> {
