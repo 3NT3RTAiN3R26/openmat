@@ -1,4 +1,4 @@
-use std::f64::consts::PI;
+﻿use std::f64::consts::PI;
 
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
@@ -110,7 +110,7 @@ fn blackman(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 }
 
 /// Modified Bessel function of the first kind, order zero.
-fn bessel_i0(x: f64) -> f64 {
+pub(crate) fn bessel_i0(x: f64) -> f64 {
     let quarter = x * x / 4.0;
     let mut term = 1.0;
     let mut sum = 1.0;
