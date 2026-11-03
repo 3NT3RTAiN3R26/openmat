@@ -177,6 +177,9 @@ impl Params {
             ));
         }
         let nfft = nfft.unwrap_or_else(|| 256.max(len.next_power_of_two()));
+        if nfft == 0 {
+            return Err(MatError::new("nfft must be a positive integer"));
+        }
         Ok(Self {
             window,
             noverlap,
