@@ -8,7 +8,7 @@ use openmat_core::{MatError, MatResult, Matrix, Session, Value};
 use rustfft::{Fft, FftPlanner};
 
 use crate::sigproc::bessel_i0;
-use crate::util::{col, matrix_arg, need, real_scalar};
+use crate::util::{col, matrix_arg, need, real_scalar, row};
 
 pub fn register(session: &mut Session) {
     for (name, func) in [
@@ -173,10 +173,13 @@ impl Params {
         let noverlap = if rect { 0 } else { noverlap.unwrap_or(len / 2) };
         if noverlap >= len {
             return Err(MatError::new(
-                "the overlap must be less than the window length",
+                "The number of samples to overlap must be less than the length of the segments.",
             ));
         }
         let nfft = nfft.unwrap_or_else(|| 256.max(len.next_power_of_two()));
+        if nfft == 0 {
+            return Err(MatError::new("nfft must be a positive integer"));
+        }
         Ok(Self {
             window,
             noverlap,
@@ -244,7 +247,7 @@ impl Params {
         let len = self.window.len();
         if n < len {
             return Err(MatError::new(
-                "the window must not be longer than the signal",
+                "The length of the segments cannot be greater than the length of the input signal.",
             ));
         }
         Ok((n - self.noverlap) / (len - self.noverlap))
@@ -366,7 +369,9 @@ fn pair(args: &[Value]) -> MatResult<Pair> {
     let x = signal(args, 0)?;
     let y = signal(args, 1)?;
     if x.len() != y.len() {
-        return Err(MatError::new("x and y must have the same length"));
+        return Err(MatError::new(
+            "The number of rows of the two inputs must be equal to calculate the cross spectral density.",
+        ));
     }
     let (slots, flags) = split_args(args, 2)?;
     let p = Params::new(
@@ -449,7 +454,7 @@ fn spectrogram(session: &mut Session, args: &[Value]) -> MatResult<Value> {
             power.set(k, i, scaled[k]);
         }
     }
-    let unit = p.fs.unwrap_or(1.0);
+    let unit = p.sample_rate();
     let times: Vec<f64> = (0..count)
         .map(|i| (i * step) as f64 / unit + p.window.len() as f64 / 2.0 / unit)
         .collect();
@@ -458,7 +463,7 @@ fn spectrogram(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         vec![
             Value::Matrix(s),
             col(p.frequencies(onesided)),
-            col(times),
+            row(times),
             Value::Matrix(power),
         ],
     ))
@@ -515,7 +520,18 @@ fn bandpower(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         Some(Value::Matrix(m)) if m.numel() > 0 => Some(m.real_scalar()?),
         _ => None,
     };
-    let p = Params::new(x.len(), None, None, None, fs, true)?;
+    let range = range_of(2)?;
+    // MATLAB integrates a Hamming-windowed periodogram of length n over a band, the total power is unwindowed.
+    let p = if range.is_some() {
+        Params {
+            window: hamming(x.len()),
+            noverlap: 0,
+            nfft: x.len(),
+            fs,
+        }
+    } else {
+        Params::new(x.len(), None, None, None, fs, true)?
+    };
     let onesided = is_real(&x);
     let raw = welch_raw(&x, None, &p)?;
     let pxx: Vec<f64> = p
@@ -526,7 +542,7 @@ fn bandpower(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     Ok(Value::scalar(integrate(
         &pxx,
         &p.frequencies(onesided),
-        range_of(2)?,
+        range,
     )?))
 }
 
@@ -556,8 +572,7 @@ struct Tones {
     fundamental: f64,
     harmonics: f64,
     total: f64,
-    fundamental_peak: f64,
-    spur_peak: f64,
+    spur: f64,
 }
 
 /// One-sided power spectrum with a Kaiser window and the powers of the fundamental and its harmonics.
@@ -574,10 +589,12 @@ fn analyze_tones(x: &[f64], harmonics: usize) -> MatResult<Tones> {
         })
         .collect();
     let sum: f64 = window.iter().sum();
+    // Removing the windowed mean empties the DC lobe, so low-frequency tones stay detectable.
+    let mean = x.iter().zip(&window).map(|(v, w)| v * w).sum::<f64>() / sum;
     let mut buffer: Vec<Complex64> = x
         .iter()
         .zip(&window)
-        .map(|(v, w)| Complex64::new(v * w, 0.0))
+        .map(|(v, w)| Complex64::new((v - mean) * w, 0.0))
         .collect();
     FftPlanner::new().plan_fft_forward(n).process(&mut buffer);
     let half = n / 2;
@@ -593,21 +610,24 @@ fn analyze_tones(x: &[f64], harmonics: usize) -> MatResult<Tones> {
         .collect();
     // Half width in bins of the Kaiser main lobe.
     let lobe = (1.0 + (KAISER_BETA / PI).powi(2)).sqrt().ceil() as usize;
-    let first = lobe + 1;
+    let first = 1;
     let span = |k: usize| k.saturating_sub(lobe).max(first)..=(k + lobe).min(half);
     let k0 = (first..=half)
         .max_by(|a, b| power[*a].total_cmp(&power[*b]))
         .ok_or_else(|| MatError::new("the signal is too short to analyze"))?;
     let mut used = vec![false; half + 1];
     let mut fundamental = 0.0;
+    let mut weighted_bin = 0.0;
     for k in span(k0) {
         fundamental += power[k];
+        weighted_bin += k as f64 * power[k];
         used[k] = true;
     }
+    let f0 = weighted_bin / fundamental;
     let mut harmonic_power = 0.0;
-    for h in 2..=harmonics + 1 {
-        let folded = (h * k0) % n;
-        let bin = if folded > half { n - folded } else { folded };
+    // `harmonics` counts the fundamental, and harmonics above Nyquist are not folded back.
+    for h in 2..=harmonics {
+        let bin = (h as f64 * f0).round() as usize;
         if bin < first || bin > half {
             continue;
         }
@@ -625,16 +645,20 @@ fn analyze_tones(x: &[f64], harmonics: usize) -> MatResult<Tones> {
     }
     let total: f64 = power[first..].iter().sum();
     let fundamental_lobe = span(k0);
-    let spur_peak = (first..=half)
+    let spur_bin = (first..=half)
         .filter(|k| !fundamental_lobe.contains(k))
-        .map(|k| power[k])
-        .fold(0.0, f64::max);
+        .max_by(|a, b| power[*a].total_cmp(&power[*b]));
+    let spur = spur_bin.map_or(0.0, |kp| {
+        span(kp)
+            .filter(|k| !fundamental_lobe.contains(k))
+            .map(|k| power[k])
+            .sum()
+    });
     Ok(Tones {
         fundamental,
         harmonics: harmonic_power,
         total,
-        fundamental_peak: power[k0],
-        spur_peak,
+        spur,
     })
 }
 
@@ -675,7 +699,7 @@ fn thd(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 fn sfdr(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let t = analyze_tones(&real_signal(args, 0)?, 6)?;
-    Ok(db(t.fundamental_peak / t.spur_peak))
+    Ok(db(t.fundamental / t.spur.max(t.fundamental * 1e-30)))
 }
 
 #[cfg(test)]
@@ -791,6 +815,250 @@ mod tests {
             .abs()
                 < 1e-12
         );
+    }
+
+    const REFERENCE_SETUP: &str = "fs = 1000; n = 0:999; t = n/fs; x = sin(2*pi*50*t) + 0.5*sin(2*pi*120.5*t) + 0.2*cos(2*pi*300*t + 0.3); y = filter([1 0.5 0.25], 1, x); n2 = 0:1023; t2 = n2/1024; z1 = sin(2*pi*100*t2) + 0.01*sin(2*pi*300*t2); z2 = sin(2*pi*100*t2) + 0.01*sin(2*pi*237*t2); z3 = sin(2*pi*100.3*t2) + 0.01*sin(2*pi*300.9*t2) + 0.002*sin(2*pi*237*t2);";
+
+    /// Values from MATLAB R2025a (Signal Processing Toolbox 25.1).
+    #[test]
+    fn matches_matlab_reference() {
+        let cases: &[(&str, &[f64])] = &[
+            (
+                r#"[p, f] = periodogram(x); v = [numel(p) p(1:3)' p(end) max(p) f(2) f(end)];"#,
+                &[
+                    513.0,
+                    0.000251505866218608,
+                    0.000572394323971207,
+                    0.000779683124866285,
+                    6.29465832429237e-06,
+                    70.3699204811591,
+                    0.00613592315154256,
+                    std::f64::consts::PI,
+                ],
+            ),
+            (
+                r#"[p, f] = periodogram(x, hamming(1000), 1024.0, fs); v = [p(50:54)' f(2) sum(p)*f(2)];"#,
+                &[
+                    1.09014100511833e-05,
+                    0.0326364132131006,
+                    0.34527327306888,
+                    0.133523587715592,
+                    0.00040445916755512,
+                    0.9765625,
+                    0.644997934222497,
+                ],
+            ),
+            (
+                r#"[p, f] = periodogram(x, [], 1000.0, fs, 'power'); v = [max(p) p(51:53)'];"#,
+                &[
+                    0.500004690717393,
+                    0.500004690717393,
+                    4.7738200321993e-06,
+                    4.8608039660983e-06,
+                ],
+            ),
+            (
+                r#"p = periodogram(x, [], 1000.0, fs, 'twosided'); v = [numel(p) p(1:3)' p(end-2:end)'];"#,
+                &[
+                    1000.0,
+                    1.58025796329431e-06,
+                    1.58048635255178e-06,
+                    1.58117180844772e-06,
+                    1.58231519617742e-06,
+                    1.58117180844772e-06,
+                    1.58048635255178e-06,
+                ],
+            ),
+            (
+                r#"p = periodogram(x + 1i*sin(2*pi*80*t), [], 1000.0, fs); v = [numel(p) p(1:3)'];"#,
+                &[
+                    1000.0,
+                    1.58025796329422e-06,
+                    1.58048635255179e-06,
+                    1.58117180844758e-06,
+                ],
+            ),
+            (
+                r#"[p, f] = pwelch(x); v = [numel(p) p(1:5)' p(end) f(2)];"#,
+                &[
+                    129.0,
+                    2.56172145123871e-05,
+                    9.8484408026377e-05,
+                    0.000209459626028437,
+                    0.000308881819852481,
+                    0.000321468653930757,
+                    2.86594474095543e-06,
+                    0.0245436926061703,
+                ],
+            ),
+            (
+                r#"[p, f] = pwelch(x, 250.0, 125.0, 256.0, fs); v = [p(1:5)' p(end-2:end)' f(2)];"#,
+                &[
+                    1.38253754313724e-06,
+                    2.78830799699045e-06,
+                    2.85874503511567e-06,
+                    2.97840598686624e-06,
+                    3.14971352300683e-06,
+                    5.9063314787832e-08,
+                    5.95966047411213e-08,
+                    2.98879502190759e-08,
+                    3.90625,
+                ],
+            ),
+            (
+                r#"[p, f] = pwelch(x, hann(200), 50.0, 512.0, fs, 'power'); v = [p(1:4)' max(p)];"#,
+                &[
+                    6.51919542817367e-11,
+                    1.87081891093625e-07,
+                    8.37644534011571e-08,
+                    7.24483671824886e-08,
+                    0.4846389427641,
+                ],
+            ),
+            (
+                r#"[p, f] = pwelch(x, 100.0, [], 128.0, fs, 'twosided'); v = [numel(p) p(1:3)' p(end-1:end)'];"#,
+                &[
+                    128.0,
+                    4.4776755692366e-09,
+                    1.57824200021661e-06,
+                    2.97080309928125e-06,
+                    2.97080309928125e-06,
+                    1.57824200021661e-06,
+                ],
+            ),
+            (
+                r#"[c, f] = cpsd(x, y, 250.0, 125.0, 256.0, fs); v = [abs(c(1:5))' angle(c(1:5))'];"#,
+                &[
+                    2.33464680179517e-06,
+                    4.70925365713641e-06,
+                    4.83034798567628e-06,
+                    5.03589150866665e-06,
+                    5.3298160500961e-06,
+                    0.0,
+                    0.0230263199622315,
+                    0.0453983193645828,
+                    0.0665155316529803,
+                    0.0858712914153653,
+                ],
+            ),
+            (
+                r#"[m, f] = mscohere(x, y, 250.0, 125.0, 256.0, fs); v = [m(1:5)' m(end-2:end)'];"#,
+                &[
+                    0.976514776263339,
+                    0.976921579046424,
+                    0.978093465606069,
+                    0.979894183166186,
+                    0.982124213562924,
+                    0.957899852592634,
+                    0.959048240622544,
+                    0.959428147701047,
+                ],
+            ),
+            (
+                r#"[h, f] = tfestimate(x, y, 250.0, 125.0, 256.0, fs); v = [abs(h(1:5))' angle(h(1:5))'];"#,
+                &[
+                    1.68866792325756,
+                    1.68892879201987,
+                    1.68967428936202,
+                    1.69080089513425,
+                    1.69215898879847,
+                    0.0,
+                    -0.0230263199622315,
+                    -0.0453983193645828,
+                    -0.0665155316529803,
+                    -0.0858712914153653,
+                ],
+            ),
+            (
+                r#"[s, f, tt, P] = spectrogram(x, 128.0, 64.0, 128.0, fs); v = [size(s) size(tt) tt(1:3) abs(s(1:4,1))' P(1:4,1)' P(1:4,end)'];"#,
+                &[
+                    65.0,
+                    14.0,
+                    1.0,
+                    14.0,
+                    0.064,
+                    0.128,
+                    0.192,
+                    0.473611407581493,
+                    0.47528119500459,
+                    0.473957299639617,
+                    0.431640009157773,
+                    4.44383224948239e-06,
+                    8.95044453920822e-06,
+                    8.90065107443419e-06,
+                    7.38221567811058e-06,
+                    2.63165577859264e-06,
+                    5.28433360815235e-06,
+                    5.15665443936893e-06,
+                    3.84086411088107e-06,
+                ],
+            ),
+            (
+                r#"[s, f, tt] = spectrogram(x); v = [size(s) size(tt) tt(1:3)];"#,
+                &[
+                    129.0,
+                    8.0,
+                    1.0,
+                    8.0,
+                    17.6661986832004,
+                    35.3323973664008,
+                    52.9985960496011,
+                ],
+            ),
+            (
+                r#"v = [bandpower(x) bandpower(x, fs, [40 60.0]) bandpower(x, fs, [100 140.0])];"#,
+                &[0.6448733080697, 0.500001584191628, 0.124980712705474],
+            ),
+            (
+                r#"[p, f] = periodogram(x, [], 1000.0, fs); v = [bandpower(p, f, [40 60.0], 'psd') bandpower(p, f, 'psd')];"#,
+                &[0.500099951535518, 0.6448733080697],
+            ),
+            (
+                r#"v = [enbw(hamming(128)) enbw(hann(1024), fs) enbw(kaiser(256, 5))];"#,
+                &[1.37053150700832, 1.46627565982405, 1.36360110404547],
+            ),
+            (
+                r#"v = [snr(z2) sfdr(z2) sinad(z2)];"#,
+                &[40.0000000000002, 40.0000000000001, 40.0000000000002],
+            ),
+            (
+                r#"v = [snr(z3) thd(z3) sfdr(z3) sinad(z3) thd(z3, 1024.0, 3)];"#,
+                &[
+                    53.9794000867117,
+                    -39.9999999999999,
+                    39.9999999999999,
+                    39.8296666070117,
+                    -39.9999999999999,
+                ],
+            ),
+            (
+                r#"v = [thd(z1) sfdr(z1) sinad(z1)];"#,
+                &[-39.9999999999993, 39.9999999999993, 39.9999999999993],
+            ),
+        ];
+        for (code, want) in cases {
+            let got = reals(&format!("{REFERENCE_SETUP} {code}"), "v");
+            assert_eq!(got.len(), want.len(), "{code}");
+            for (g, w) in got.iter().zip(*want) {
+                assert!(
+                    (g - w).abs() <= 1e-7 * w.abs() + 1e-12,
+                    "{code}: {got:?} vs {want:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn errors_match_matlab_messages() {
+        for (src, text) in [
+            ("p = pwelch(ones(1, 1000), 2000);", "The length of the segments cannot be greater than the length of the input signal."),
+            ("p = pwelch(ones(1, 1000), 100, 100);", "The number of samples to overlap must be less than the length of the segments."),
+            ("c = mscohere([1 2 3 4], [1 2 3]);", "The number of rows of the two inputs must be equal to calculate the cross spectral density."),
+        ] {
+            let err = crate::exec(src).err().unwrap().to_string();
+            assert!(err.contains(text), "{src}: {err}");
+        }
+        assert!(crate::exec("p = periodogram([1 2 3 4], [], 0);").is_err());
     }
 
     #[test]
