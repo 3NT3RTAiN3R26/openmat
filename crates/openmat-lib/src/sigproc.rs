@@ -246,7 +246,7 @@ fn dim_arg(args: &[Value], index: usize, m: &Matrix) -> MatResult<usize> {
 }
 
 /// Applies `f` to every column (`dim` 1) or row (`dim` 2). `f` may change the length.
-fn along(
+pub(crate) fn along(
     m: &Matrix,
     dim: usize,
     empty_rows: usize,

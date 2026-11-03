@@ -9,7 +9,6 @@ pub fn register(session: &mut Session) {
         ("fft", fft as fn(&mut Session, &[Value]) -> MatResult<Value>),
         ("ifft", ifft),
         ("conv", conv),
-        ("fir1", fir1),
     ] {
         session.register_builtin(name, func);
     }
@@ -136,37 +135,4 @@ fn conv(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
     };
     Ok(oriented(y))
-}
-
-fn fir1(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    need(args, 2)?;
-    let order = positive(real_scalar(args, 0)?)?;
-    let wn = real_scalar(args, 1)?;
-    if !(0.0..1.0).contains(&wn) {
-        return Err(MatError::new("fir1 wn must be in (0, 1)"));
-    }
-    Ok(row(fir_window(order, wn)))
-}
-
-pub fn fir_window(order: usize, wn: f64) -> Vec<f64> {
-    let wc = wn * std::f64::consts::PI;
-    let mid = order as f64 / 2.0;
-    let mut h = vec![0.0; order + 1];
-    for i in 0..=order {
-        let x = i as f64 - mid;
-        let sinc = if x.abs() < 1e-12 {
-            wn
-        } else {
-            (wc * x).sin() / (std::f64::consts::PI * x)
-        };
-        let window = 0.54 - 0.46 * (2.0 * std::f64::consts::PI * i as f64 / order.max(1) as f64).cos();
-        h[i] = sinc * window;
-    }
-    let sum: f64 = h.iter().sum();
-    if sum != 0.0 {
-        for v in &mut h {
-            *v /= sum;
-        }
-    }
-    h
 }
