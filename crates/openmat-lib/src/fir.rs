@@ -303,7 +303,7 @@ fn sgolayfilt(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         return Err(MatError::new("sgolayfilt frame length must not exceed the signal length"));
     }
     let b = sgolay_matrix(order, frame)?;
-    let result = along(&x, dim, |seq| {
+    let result = along(&x, dim, length, |seq| {
         let re: Vec<f64> = seq.iter().map(|z| z.re).collect();
         let im: Vec<f64> = seq.iter().map(|z| z.im).collect();
         smooth(&re, &b, frame)
