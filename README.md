@@ -58,7 +58,7 @@ Plots: `plot`, `stem`, `figure`, `clf`, `close`, `hold`, `xlabel`, `ylabel`, `ti
 
 Signal processing: `fft`, `ifft`, `filter`, `conv`, `freqz`, `butter`, `fir1`. `butter` uses the bilinear transform with prewarping. `wn = 1` is the Nyquist frequency. Call: `[b, a] = butter(n, wn)`.
 
-Windows (column vectors, `'periodic'` for `hann`, `hamming`, `blackman`, `bartlett`): `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser(L, beta)`, `gausswin(L, alpha)`, `tukeywin(L, r)`. Basics: `nextpow2`, `fftshift`, `ifftshift`, `sinc`, `angle`, `cumsum`, `diff`, `unwrap`, `detrend` (`'constant'`, `'linear'`, or a polynomial order), `hilbert` (analytic signal), `xcorr` (`[c, lags] = xcorr(x, y, maxlag, 'coeff')`, scales `none`, `biased`, `unbiased`, `coeff`). Polynomials: `polyval`, `poly`, `roots`, `[q, r] = deconv(y, a)`.
+Windows (column vectors, `'periodic'` for `hann`, `hamming`, `blackman`): `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser(L, beta)`, `gausswin(L, alpha)`, `tukeywin(L, r)`. Basics: `nextpow2`, `fftshift`, `ifftshift`, `sinc`, `angle`, `cumsum`, `diff`, `unwrap`, `detrend` (`'constant'`, `'linear'`, or a polynomial order), `hilbert` (analytic signal), `xcorr` (`[c, lags] = xcorr(x, y, maxlag, 'coeff')`, scales `none`, `biased`, `unbiased`, `coeff`). Polynomials: `polyval`, `poly`, `roots`, `[q, r] = deconv(y, a)`.
 
 Control: `tf`, `ss`, `step`, `bode`, `pole`. `step` integrates controllable canonical form with RK4.
 
