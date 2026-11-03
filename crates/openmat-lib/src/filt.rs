@@ -436,7 +436,7 @@ fn statistic_columns(args: &[Value]) -> MatResult<(Vec<Vec<f64>>, f64)> {
     };
     if args.len() >= 2 {
         let second = matrix_arg(args, 1)?;
-        if second.numel() == 1 && first.numel() > 1 {
+        if second.numel() == 1 && args.len() == 2 {
             option = second.real_scalar()?;
         } else {
             if second.numel() != first.numel() {
