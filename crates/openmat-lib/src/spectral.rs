@@ -608,7 +608,7 @@ fn analyze_tones(x: &[f64], harmonics: usize) -> MatResult<Tones> {
         used[k] = true;
     }
     let mut harmonic_power = 0.0;
-    for h in 2..=harmonics + 1 {
+    for h in 2..=harmonics {
         let folded = (h * k0) % n;
         let bin = if folded > half { n - folded } else { folded };
         if bin < first || bin > half {
