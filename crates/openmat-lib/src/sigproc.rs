@@ -209,7 +209,7 @@ fn angle(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 // Work along a dimension
 
-fn default_dim(m: &Matrix) -> usize {
+pub(crate) fn default_dim(m: &Matrix) -> usize {
     if m.rows == 1 {
         2
     } else {
@@ -396,8 +396,13 @@ fn poly(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     } else {
         return Err(MatError::new("poly needs a vector or a square matrix"));
     };
+    Ok(coefficient_row(poly_from_roots(&zeros)))
+}
+
+/// Coefficients, highest power first, of the monic polynomial with the given roots.
+pub(crate) fn poly_from_roots(zeros: &[Complex64]) -> Vec<Complex64> {
     let mut coeff = vec![Complex64::new(1.0, 0.0)];
-    for z in &zeros {
+    for z in zeros {
         let mut next = vec![Complex64::new(0.0, 0.0); coeff.len() + 1];
         for (i, c) in coeff.iter().enumerate() {
             next[i] += c;
@@ -405,16 +410,21 @@ fn poly(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
         coeff = next;
     }
+    coeff
+}
+
+/// A row vector that is real when the imaginary parts are rounding noise.
+pub(crate) fn coefficient_row(coeff: Vec<Complex64>) -> Value {
     let scale = coeff.iter().map(|c| c.norm()).fold(1.0, f64::max);
     if coeff.iter().all(|c| c.im.abs() <= 1e-10 * scale) {
-        return Ok(row(coeff.iter().map(|c| c.re).collect()));
+        return row(coeff.iter().map(|c| c.re).collect());
     }
-    Ok(Value::Matrix(Matrix {
+    Value::Matrix(Matrix {
         rows: 1,
         cols: coeff.len(),
         data: coeff,
         logical: false,
-    }))
+    })
 }
 
 fn roots(_: &mut Session, args: &[Value]) -> MatResult<Value> {
@@ -422,7 +432,18 @@ fn roots(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     if m.rows != 1 && m.cols != 1 && m.numel() != 0 {
         return Err(MatError::new("roots needs a vector of coefficients"));
     }
-    let mut p = m.reals()?;
+    let found = polynomial_roots(&m.reals()?)?;
+    Ok(Value::Matrix(Matrix {
+        rows: found.len(),
+        cols: 1,
+        data: found,
+        logical: false,
+    }))
+}
+
+/// Roots of a real polynomial. Leading zeros are dropped, trailing zeros give roots at 0.
+pub(crate) fn polynomial_roots(coefficients: &[f64]) -> MatResult<Vec<Complex64>> {
+    let mut p = coefficients.to_vec();
     let leading = p.iter().take_while(|c| **c == 0.0).count();
     p.drain(..leading);
     let trailing = p.iter().rev().take_while(|c| **c == 0.0).count();
@@ -443,12 +464,7 @@ fn roots(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
     };
     found.extend(std::iter::repeat_n(Complex64::new(0.0, 0.0), trailing));
-    Ok(Value::Matrix(Matrix {
-        rows: found.len(),
-        cols: 1,
-        data: found,
-        logical: false,
-    }))
+    Ok(found)
 }
 
 // Analysis
@@ -545,7 +561,7 @@ enum XcorrScale {
     Coeff,
 }
 
-fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+pub(crate) fn xcorr(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 1)?;
     let mut scale = XcorrScale::None;
     let mut numeric: Vec<&Value> = Vec::new();

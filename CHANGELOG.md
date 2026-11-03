@@ -7,6 +7,9 @@ Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch
 - Windows: `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser`, `gausswin`, `tukeywin`.
 - Basics: `nextpow2`, `fftshift`, `ifftshift`, `sinc`, `angle`, `cumsum`, `diff`, `unwrap`, `detrend`, `hilbert`, `xcorr`.
 - Polynomials: `polyval`, `poly`, `roots`, `deconv`.
+- Filtering: `filter` with initial conditions, final state, dimension, and the shape of the input (it returned a column before), `filtic`, `filtfilt`, `sosfilt`.
+- Conversions: `sos2tf`, `zp2tf`, `tf2zp`. Responses: `freqs`, `grpdelay`, `impz`.
+- `conv` accepts `'full'`, `'same'`, `'valid'`. New: `cov`, `corrcoef`, `xcov`.
 
 ## 0.2.1
 

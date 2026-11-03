@@ -60,6 +60,8 @@ Signal processing: `fft`, `ifft`, `filter`, `conv`, `freqz`, `butter`, `fir1`. `
 
 Windows (column vectors, `'periodic'` for `hann`, `hamming`, `blackman`, `bartlett`): `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser(L, beta)`, `gausswin(L, alpha)`, `tukeywin(L, r)`. Basics: `nextpow2`, `fftshift`, `ifftshift`, `sinc`, `angle`, `cumsum`, `diff`, `unwrap`, `detrend` (`'constant'`, `'linear'`, or a polynomial order), `hilbert` (analytic signal), `xcorr` (`[c, lags] = xcorr(x, y, maxlag, 'coeff')`, scales `none`, `biased`, `unbiased`, `coeff`). Polynomials: `polyval`, `poly`, `roots`, `[q, r] = deconv(y, a)`.
 
+Filtering: `y = filter(b, a, x)` keeps the shape of `x`. `[y, zf] = filter(b, a, x, zi, dim)` takes and returns the filter state, `zi = filtic(b, a, y_past, x_past)` builds it from past samples. `filtfilt(b, a, x)` filters forward and backward with odd edge extension (zero phase), `sosfilt(sos, x)` runs second-order sections. Conversions: `[b, a] = sos2tf(sos, g)`, `[b, a] = zp2tf(z, p, k)`, `[z, p, k] = tf2zp(b, a)`. Responses: `freqs(b, a, w)` (a vector of rad/s), `[gd, w] = grpdelay(b, a, n)`, `[h, t] = impz(b, a, n)`. Without `n`, `impz` runs until the slowest pole has decayed to 5e-5, which is not MATLAB's length. They return values and do not plot. `conv(a, b, 'same')` and `'valid'`. Statistics: `cov`, `corrcoef`, `xcov`.
+
 Control: `tf`, `ss`, `step`, `bode`, `pole`. `step` integrates controllable canonical form with RK4.
 
 Fixed-point: `fi(value, signed, word length, fraction length)`, `fi2hex`, `fi_write(x, 'file.txt')`, `double`. Rounding is half away from zero. Overflow saturates. `fi_write` writes one hex word per line, column-major, for VHDL testbenches.

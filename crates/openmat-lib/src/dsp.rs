@@ -8,7 +8,6 @@ pub fn register(session: &mut Session) {
     for (name, func) in [
         ("fft", fft as fn(&mut Session, &[Value]) -> MatResult<Value>),
         ("ifft", ifft),
-        ("filter", filter),
         ("conv", conv),
         ("freqz", freqz),
         ("butter", butter),
@@ -97,42 +96,20 @@ fn fft_buf(samples: &[Complex64], forward: bool) -> Vec<Complex64> {
     buf
 }
 
-fn filter(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    need(args, 3)?;
-    let b = matrix_arg(args, 0)?.reals()?;
-    let a = matrix_arg(args, 1)?.reals()?;
-    let x = matrix_arg(args, 2)?.reals()?;
-    if a.is_empty() || a[0] == 0.0 {
-        return Err(MatError::new("filter denominator a(1) must be non-zero"));
-    }
-    let y = direct_form(&b, &a, &x);
-    Ok(col(y))
-}
-
-pub fn direct_form(b: &[f64], a: &[f64], x: &[f64]) -> Vec<f64> {
-    let a0 = a[0];
-    let mut y = vec![0.0; x.len()];
-    for n in 0..x.len() {
-        let mut acc = 0.0;
-        for (k, bk) in b.iter().enumerate() {
-            if n >= k {
-                acc += bk * x[n - k];
-            }
-        }
-        for k in 1..a.len() {
-            if n >= k {
-                acc -= a[k] * y[n - k];
-            }
-        }
-        y[n] = acc / a0;
-    }
-    y
-}
-
 fn conv(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
     let a = matrix_arg(args, 0)?.reals()?;
     let b = matrix_arg(args, 1)?.reals()?;
+    let shape = match args.get(2) {
+        None => "full".to_string(),
+        Some(Value::Char(shape)) => shape.clone(),
+        Some(other) => {
+            return Err(MatError::new(format!(
+                "conv shape must be 'full', 'same' or 'valid', got {}",
+                other.type_name()
+            )))
+        }
+    };
     if a.is_empty() || b.is_empty() {
         return Ok(row(Vec::new()));
     }
@@ -142,6 +119,20 @@ fn conv(_: &mut Session, args: &[Value]) -> MatResult<Value> {
             y[i + j] += av * bv;
         }
     }
+    let y = match shape.as_str() {
+        "full" => y,
+        "same" => {
+            let start = (b.len() - 1).div_ceil(2);
+            y[start..start + a.len()].to_vec()
+        }
+        "valid" if a.len() >= b.len() => y[b.len() - 1..a.len()].to_vec(),
+        "valid" => Vec::new(),
+        other => {
+            return Err(MatError::new(format!(
+                "conv shape must be 'full', 'same' or 'valid', got '{other}'"
+            )))
+        }
+    };
     Ok(row(y))
 }
 
