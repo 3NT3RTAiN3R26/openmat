@@ -93,6 +93,7 @@ pub fn spawn_tcp(bind: &str, device: Arc<Mutex<Device>>) -> Result<std::net::Soc
 
 fn serve_tcp_client(stream: &mut TcpStream, device: &Mutex<Device>) -> Result<(), HilError> {
     stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(30))).ok();
     loop {
         let mut header = [0u8; 14];
         if stream.read_exact(&mut header).is_err() {

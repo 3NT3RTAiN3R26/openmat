@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::protocol::{bytes_to_f64s, f64s_to_bytes, Frame, Op};
+use crate::protocol::{bytes_to_f64s, f64s_to_bytes, Frame, Op, MAX_FRAME_PAYLOAD};
 use crate::HilError;
 
 #[derive(Debug, Default)]
@@ -21,6 +21,11 @@ impl Device {
             },
             Op::Read => {
                 let n = frame.addr as usize;
+                if n.saturating_mul(8) > MAX_FRAME_PAYLOAD {
+                    return error_frame(format!(
+                        "read of {n} samples exceeds the {MAX_FRAME_PAYLOAD} byte frame limit"
+                    ));
+                }
                 if self.fifo.len() < n {
                     return error_frame(format!(
                         "only {} samples are buffered, read asked for {n}",
@@ -71,5 +76,20 @@ pub fn ensure_ack(frame: Frame) -> Result<Frame, HilError> {
             Err(HilError::new(message))
         }
         _ => Err(HilError::new("HIL peer sent an unexpected opcode")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_read_is_rejected_without_draining_the_fifo() {
+        let mut device = Device::default();
+        device.fifo.extend([1.0, 2.0, 3.0]);
+        let n = (MAX_FRAME_PAYLOAD / 8 + 1) as u32;
+        let response = device.dispatch(Frame { op: Op::Read, addr: n, payload: Vec::new() });
+        assert_eq!(response.op, Op::Err);
+        assert_eq!(device.fifo.len(), 3);
     }
 }

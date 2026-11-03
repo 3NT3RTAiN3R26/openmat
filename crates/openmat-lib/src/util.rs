@@ -50,7 +50,7 @@ pub fn dim_pair(args: &[Value]) -> MatResult<(usize, usize)> {
 }
 
 pub fn positive(v: f64) -> MatResult<usize> {
-    if !v.is_finite() || v < 0.0 || (v - v.round()).abs() > 1e-8 || v > usize::MAX as f64 {
+    if !v.is_finite() || v < 0.0 || (v - v.round()).abs() > 1e-8 || v >= usize::MAX as f64 + 1.0 {
         return Err(MatError::new(format!(
             "expected a non-negative integer, got {v}"
         )));
@@ -71,4 +71,16 @@ pub fn char_arg(args: &[Value], index: usize) -> MatResult<String> {
 
 pub fn empty() -> Value {
     Value::Matrix(Matrix::empty())
+}
+
+#[cfg(test)]
+mod positive_tests {
+    use super::positive;
+
+    #[test]
+    fn rejects_the_exclusive_usize_upper_bound() {
+        assert!(positive(18446744073709551616.0).is_err() || usize::BITS < 64);
+        assert!(positive(usize::MAX as f64 + 1.0).is_err());
+        assert_eq!(positive(3.0).unwrap(), 3);
+    }
 }

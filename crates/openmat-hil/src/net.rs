@@ -27,6 +27,17 @@ pub fn exchange_tcp(stream: &mut TcpStream, frame: &Frame) -> Result<Frame, HilE
 }
 
 pub fn read_frame(stream: &mut TcpStream) -> Result<Frame, HilError> {
+    match read_raw_frame(stream) {
+        Ok(frame) => ensure_ack(frame),
+        Err(err) => {
+            // The frame was not fully consumed, so the stream is desynchronized.
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            Err(err)
+        }
+    }
+}
+
+fn read_raw_frame(stream: &mut TcpStream) -> Result<Frame, HilError> {
     let mut header = [0u8; 14];
     stream
         .read_exact(&mut header)
@@ -41,7 +52,7 @@ pub fn read_frame(stream: &mut TcpStream) -> Result<Frame, HilError> {
         .map_err(|err| HilError::new(format!("TCP body read failed: {err}")))?;
     let mut all = header.to_vec();
     all.extend_from_slice(&rest);
-    ensure_ack(decode(&all)?)
+    decode(&all)
 }
 
 pub fn udp_socket(host: &str, port: u16) -> Result<UdpSocket, HilError> {
