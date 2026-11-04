@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  library-tests:
+    name: openmat-lib tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Run openmat-lib tests
+        run: |
+          set -o pipefail
+          cargo test -p openmat-lib --lib -- --nocapture 2>&1 | tee test-report.txt
+      - name: Publish the test report
+        if: always()
+        run: |
+          {
+            echo "## openmat-lib tests"
+            echo
+            echo '```'
+            tail -n 40 test-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openmat-lib-test-report
+          path: test-report.txt
