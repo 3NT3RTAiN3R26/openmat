@@ -24,6 +24,7 @@ pub fn register(session: &mut Session) {
     ] {
         session.register_builtin(name, func);
     }
+    crate::ssdesign::register(session);
 }
 
 fn product_of_negated(values: &[Complex64]) -> Complex64 {
@@ -233,27 +234,33 @@ enum Band {
     Stop,
 }
 
-/// Shared argument handling of `butter`, `cheby1`, and `cheby2`.
-/// `extra` is 1 when the prototype takes a ripple argument before `Wn`.
-fn design(
+/// Shared argument handling of the IIR designers.
+/// `extra` counts the ripple arguments between the order and `Wn` (0, 1, or 2).
+/// `always_analog` is for `besself`, which has no `'s'` flag.
+pub(crate) fn design_prototype(
     session: &mut Session,
     args: &[Value],
     name: &str,
     extra: usize,
-    prototype: impl Fn(usize, f64) -> Zpk,
+    always_analog: bool,
+    prototype: impl Fn(usize, f64, f64) -> MatResult<Zpk>,
 ) -> MatResult<Value> {
     need(args, 2 + extra)?;
     let n = positive(real_scalar(args, 0)?)?;
     if n == 0 {
         return Err(MatError::new(format!("{name} order must be at least 1")));
     }
-    let ripple = if extra == 1 { real_scalar(args, 1)? } else { 0.0 };
-    if extra == 1 && ripple <= 0.0 {
+    let ripple = if extra >= 1 { real_scalar(args, 1)? } else { 0.0 };
+    let stop = if extra >= 2 { real_scalar(args, 2)? } else { 0.0 };
+    if extra >= 1 && ripple <= 0.0 {
         return Err(MatError::new(format!("{name} ripple in dB must be positive")));
+    }
+    if extra >= 2 && stop <= 0.0 {
+        return Err(MatError::new(format!("{name} stopband attenuation in dB must be positive")));
     }
     let wn = matrix_arg(args, 1 + extra)?.reals()?;
     let mut band = None;
-    let mut analog = false;
+    let mut analog = always_analog;
     for arg in &args[2 + extra..] {
         let Value::Char(option) = arg else {
             return Err(MatError::new(format!("{name} options must be strings")));
@@ -293,7 +300,23 @@ fn design(
             .map(|w| NORMALIZED_FS2 * (PI * w / 2.0).tan())
             .collect()
     };
-    let lowpass = prototype(n, ripple);
+    let lowpass = prototype(n, ripple, stop)?;
+    if session.nargout >= 4 {
+        let (center, bw) = if edges.len() == 2 {
+            ((edges[0] * edges[1]).sqrt(), edges[1] - edges[0])
+        } else {
+            (edges[0], 0.0)
+        };
+        let kind = match band {
+            Band::Low => "low",
+            Band::High => "high",
+            Band::Pass => "pass",
+            Band::Stop => "stop",
+        };
+        return crate::ssdesign::realize_prototype(
+            &lowpass.0, &lowpass.1, lowpass.2, kind, center, bw, !analog,
+        );
+    }
     let transformed = match band {
         Band::Low => lp2lp(lowpass, edges[0]),
         Band::High => lp2hp(lowpass, edges[0]),
@@ -306,6 +329,16 @@ fn design(
         bilinear_zpk(transformed, NORMALIZED_FS2)
     };
     Ok(finish(session, result))
+}
+
+fn design(
+    session: &mut Session,
+    args: &[Value],
+    name: &str,
+    extra: usize,
+    prototype: impl Fn(usize, f64) -> Zpk,
+) -> MatResult<Value> {
+    design_prototype(session, args, name, extra, false, |n, ripple, _| Ok(prototype(n, ripple)))
 }
 
 fn butter(session: &mut Session, args: &[Value]) -> MatResult<Value> {
@@ -775,6 +808,77 @@ mod tests {
             assert!(crate::exec(src).is_err(), "{src}");
         }
         assert!(crate::exec("b = butter(2, 0.3);").is_ok());
+    }
+
+    #[test]
+    fn elliptic_bessel_order_comb_and_state_space_match_matlab() {
+        let (b, a) = design("[b, a] = ellip(4, 1, 40, 0.4);");
+        assert_close(
+            &b,
+            &[0.0619275783709742, 0.110315932927851, 0.15213513071375, 0.110315932927851, 0.0619275783709743],
+            1e-8,
+        );
+        assert_close(&a, &[1.0, -1.5035240101015, 1.73197723928598, -0.98578745948173, 0.314553451127826], 1e-8);
+        let (b, a) = design("[b, a] = ellip(3, 1, 40, 5, 's');");
+        assert_close(&b, &[0.0, 0.346007446087609, 0.0, 65.8145780450568], 1e-6);
+        assert_close(&a, &[1.0, 4.89120286111517, 31.0844846740454, 65.8145780450568], 1e-6);
+        let (b, a) = design("[b, a] = besself(4, 10);");
+        assert_close(&a, &[1.0, 31.2393993692026, 439.15503282684, 3201.08587294368, 10000.0], 1e-6);
+        assert!((b[4] - 10000.0).abs() < 1e-4, "{b:?}");
+        let (b, a) = design("[b, a] = besself(3, 5, 'high');");
+        assert_close(&a, &[1.0, 12.3310603716524, 60.822019955734, 125.0], 1e-6);
+        assert!((b[0] - 1.0).abs() < 1e-6, "{b:?}");
+        let src = "[n, Wn] = buttord(0.2, 0.3, 3, 40);";
+        assert_close(&reals(src, "n"), &[11.0], 1e-9);
+        assert_close(&reals(src, "Wn"), &[0.205921857858957], 1e-9);
+        let src = "[n, Wn] = buttord(0.3, 0.2, 3, 40);";
+        assert_close(&reals(src, "Wn"), &[0.292025730864784], 1e-9);
+        let src = "[n, Wn] = buttord([0.2 0.4], [0.1 0.5], 3, 40);";
+        assert_close(&reals(src, "n"), &[8.0], 1e-9);
+        assert_close(&reals(src, "Wn"), &[0.195101359239224, 0.408043633381889], 1e-8);
+        let src = "[n, Wn] = buttord([0.1 0.5], [0.2 0.4], 3, 40);";
+        // The stopband-matched edges agree with R2025a to about 2e-5.
+        assert_close(&reals(src, "Wn"), &[0.153469358434776, 0.487044763255801], 3e-5);
+        let src = "[n, Wn] = buttord(2, 3, 3, 40, 's');";
+        assert_close(&reals(src, "n"), &[12.0], 1e-9);
+        assert_close(&reals(src, "Wn"), &[2.04388472376833], 1e-8);
+        let src = "[n, Wn] = cheb1ord(0.2, 0.3, 3, 40);";
+        assert_close(&reals(src, "n"), &[6.0], 1e-9);
+        assert_close(&reals(src, "Wn"), &[0.2], 1e-12);
+        let src = "[n, Wn] = cheb2ord([0.2 0.4], [0.1 0.5], 3, 40);";
+        assert_close(&reals(src, "n"), &[5.0], 1e-9);
+        assert_close(&reals(src, "Wn"), &[0.1, 0.5], 1e-12);
+        let src = "[n, Wn] = ellipord(0.2, 0.3, 3, 40);";
+        assert_close(&reals(src, "n"), &[4.0], 1e-9);
+        let (b, a) = design("[b, a] = iircomb(8, 0.05);");
+        assert_close(&b, &[0.754762724747214, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.754762724747214], 1e-12);
+        assert_close(&a, &[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.509525449494429], 1e-12);
+        let (b, a) = design("[b, a] = iircomb(8, 0.05, 'peak');");
+        assert_close(&b, &[0.245237275252785, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.245237275252785], 1e-12);
+        assert_close(&a, &[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.509525449494429], 1e-12);
+        let (b, a) = design("[b, a] = iircomb(8, 0.05, 10, 'notch');");
+        assert_close(&b, &[0.506390883689492, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.506390883689492], 1e-12);
+        assert_close(&a, &[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.0127817673789838], 1e-12);
+        let src = "[A, B, C, D] = tf2ss(1, [1 1.4142 1]); [At, Bt, Ct, Dt] = lp2lp(A, B, C, D, 3);";
+        assert_close(&reals(src, "At"), &[-4.2426, 3.0, -3.0, 0.0], 1e-8);
+        let src = "[A, B, C, D] = tf2ss(1, [1 1.4142 1]); [At, Bt, Ct, Dt] = lp2hp(A, B, C, D, 3);";
+        assert_close(&reals(src, "At"), &[0.0, -3.0, 3.0, -4.2426], 1e-8);
+        assert_close(&reals(src, "Dt"), &[1.0], 1e-8);
+        let src = "[A, B, C, D] = butter(3, 0.3);";
+        assert_close(
+            &reals(src, "A"),
+            &[
+                0.324919696232906, 0.381586353012801, 0.194427958039787, 0.0, 0.13049173819312,
+                0.576014311052587, 0.0, -0.576014311052587, 0.706506049245707,
+            ],
+            1e-9,
+        );
+        assert_close(
+            &reals(src, "B"),
+            &[0.954707721278373, 0.274962655164374, 0.140100470466809],
+            1e-9,
+        );
+        assert_close(&reals(src, "D"), &[0.0495329963572532], 1e-9);
     }
 
     #[test]
