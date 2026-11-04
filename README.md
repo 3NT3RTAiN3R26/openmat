@@ -6,7 +6,7 @@ openmat is an open-source interpreter for a MATLAB-like language, written in Rus
 
 License: [Apache License 2.0](LICENSE). Copyright 2026 Tobias Zoske.
 
-This is not a complete MATLAB replacement. Simulink is missing. The built-in subset is in the [feature scope](docs/Home.md).
+This is not a complete MATLAB replacement. Simulink is missing. The built-in subset is in the [wiki](https://github.com/3NT3RTAiN3R26/openmat/wiki).
 
 ## Build and run
 
@@ -50,22 +50,22 @@ The editor shows line numbers. Click a number to set or clear a breakpoint (red 
 
 ## Supported areas
 
-The function lists and calling details are in the [feature scope](docs/Home.md).
+The function lists and calling details are in the [wiki](https://github.com/3NT3RTAiN3R26/openmat/wiki).
 
-- [Language](docs/Language.md): scripts, matrices, cells, structs, `fi`, `tf` / `ss`
-- [Core](docs/Core.md): arrays, linear algebra, text, plots
-- [Signal Processing](docs/Signal-Processing.md): windows, filtering, IIR and FIR design, spectra, resampling. Not yet: `cwt`, `dwt`
-- [Control and fixed-point](docs/Control-and-Fixed-Point.md): `tf`, `ss`, `step`, `bode`, `fi`
-- [Search path](docs/Search-Path.md): `addpath`, `private/`, `+package`. Not yet: `@class`
-- [HIL](docs/HIL.md): loopback, UDP, TCP, and JTAG against a board profile
+- [Language](https://github.com/3NT3RTAiN3R26/openmat/wiki/Language): scripts, matrices, cells, structs, `fi`, `tf` / `ss`
+- [Core](https://github.com/3NT3RTAiN3R26/openmat/wiki/Core): arrays, linear algebra, text, plots
+- [Signal Processing](https://github.com/3NT3RTAiN3R26/openmat/wiki/Signal-Processing): windows, filtering, IIR and FIR design, spectra, resampling. Not yet: `cwt`, `dwt`
+- [Control and fixed-point](https://github.com/3NT3RTAiN3R26/openmat/wiki/Control-and-Fixed-Point): `tf`, `ss`, `step`, `bode`, `fi`
+- [Search path](https://github.com/3NT3RTAiN3R26/openmat/wiki/Search-Path): `addpath`, `private/`, `+package`. Not yet: `@class`
+- [HIL](https://github.com/3NT3RTAiN3R26/openmat/wiki/HIL): loopback, UDP, TCP, and JTAG against a board profile
 
 ## Search path
 
-A name that is not a variable or a function in the script is looked up as an `.m` file in the current folder, then on the search path. `addpath`, `rmpath`, `path`, `genpath`, `which`, `exist`, `run`, and `savepath` are built in. The CLI adds the script folder to the path. `openmat --cd script.m` changes into that folder instead. Details and `private/` / `+package` rules are on the [search path](docs/Search-Path.md) page.
+A name that is not a variable or a function in the script is looked up as an `.m` file in the current folder, then on the search path. `addpath`, `rmpath`, `path`, `genpath`, `which`, `exist`, `run`, and `savepath` are built in. The CLI adds the script folder to the path. `openmat --cd script.m` changes into that folder instead. Details and `private/` / `+package` rules are on the [search path](https://github.com/3NT3RTAiN3R26/openmat/wiki/Search-Path) page.
 
 ## HIL
 
-`hil.open`, `hil.write`, `hil.read`, `hil.regwrite`, `hil.regread`, and `hil.close` talk to a loopback target or to `openmat-agent` over UDP or TCP. JTAG uses Vivado. Board profiles live in `boards/`. The frame layout and the PYNQ RFSoC 4x2 steps are on the [HIL](docs/HIL.md) page. Without a board: `cargo run -p openmat-cli -- examples/hil_loopback.m`.
+`hil.open`, `hil.write`, `hil.read`, `hil.regwrite`, `hil.regread`, and `hil.close` talk to a loopback target or to `openmat-agent` over UDP or TCP. JTAG uses Vivado. Board profiles live in `boards/`. The frame layout and the PYNQ RFSoC 4x2 steps are on the [HIL](https://github.com/3NT3RTAiN3R26/openmat/wiki/HIL) page. Without a board: `cargo run -p openmat-cli -- examples/hil_loopback.m`.
 
 ## Examples
 
