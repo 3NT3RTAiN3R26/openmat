@@ -6,7 +6,7 @@ openmat is an open-source interpreter for a MATLAB-like language, written in Rus
 
 License: [Apache License 2.0](LICENSE). Copyright 2026 Tobias Zoske.
 
-This is not a complete MATLAB replacement. Simulink and the proprietary toolboxes are missing. The supported subset is listed below.
+This is not a complete MATLAB replacement. Simulink is missing. The built-in subset is in the [feature scope](docs/Home.md).
 
 ## Build and run
 
@@ -48,77 +48,24 @@ The editor shows line numbers. Click a number to set or clear a breakpoint (red 
 - Comments `%` and `%{ %}`, line continuation `...`
 - Values: real and complex matrices (column-major), strings, logicals, cells, structs, function handles, `fi`, `tf` / `ss`
 
-## Functions
+## Supported areas
 
-Linear algebra and basics: `zeros`, `ones`, `eye`, `size`, `length`, `numel`, `ndims`, `isempty`, `diag`, `linspace`, `reshape`, `sum`, `mean`, `min`, `max`, `inv`, `det`, `eig`, `svd`, `\`, `/`, `rand`, `randn`, `rng`, `abs`, `sqrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log10`, `floor`, `ceil`, `round`, `sign`, `real`, `imag`, `conj`, `transpose`, `ctranspose`, `disp`, `fprintf`, `sprintf`, `clear`, `home`.
+The function lists and calling details are in the [feature scope](docs/Home.md).
 
-`clear` removes variables from the workspace. `clear name` removes one name. `clear` and `clear all` empty the workspace. `pi`, `i`, `j`, `inf`, `nan`, `true`, and `false` stay. `home` clears the console output so far; text after `home` remains. Both work without parentheses: `clear x` and `home`.
-
-Plots: `plot`, `stem`, `figure`, `clf`, `close`, `hold`, `xlabel`, `ylabel`, `title`, `subplot`. `clf` and `clf reset` clear the current figure. `close`, `close(n)`, and `close all` close figures. The GUI opens a separate window for every figure that has content. You can drag that window onto the desktop. The close button does the same as `close(n)`. The project default is `docked`: `set(0, 'DefaultFigureWindowStyle', 'docked')`. Figures created after that appear as tabs in one shared window. `set(0, 'DefaultFigureWindowStyle', 'normal')` opens them as separate windows. This applies to figures created after the `set`. A figure that already has curves keeps its current presentation. Under **Options**, **Reuse Figure** draws into the current figure. **New Figure** opens a new figure before `plot`, `stem`, `step`, and `bode` when the current figure already has curves and `hold` is off. `figure(n)` selects that figure in both modes. The CLI keeps the data and does not abort.
-
-Signal processing: `fft`, `ifft`, `filter`, `conv`, `freqz`. FIR design: `b = fir1(n, Wn, ftype, window, 'noscale')` with `ftype` `'low'`, `'high'`, `'bandpass'`, `'stop'`, `'DC-0'`, `'DC-1'` (default Hamming window of length `n + 1`, scaled to unit gain in the first passband; an odd order that passes Nyquist is raised by one with a warning), `firls(n, f, a, w, type)` (least squares, linear phase, also 'hilbert' and 'differentiator'; an odd symmetric order that passes Nyquist is raised by one with a warning), `gaussdesign(bt, span, sps)`, `rcosdesign(beta, span, sps, shape)` (unit energy, `'sqrt'` or `'normal'`), `B = sgolay(order, framelen)` and `sgolayfilt(x, order, framelen)`. IIR design: `[b, a] = butter(n, Wn, ftype)`, `cheby1(n, Rp, Wn, ftype)`, `cheby2(n, Rs, Wn, ftype)` with `ftype` `'low'`, `'high'`, `'bandpass'`, `'stop'` (a two-element `Wn` means bandpass and doubles the order) and `'s'` for analog filters (`Wn` in rad/s). `Wn = 1` is the Nyquist frequency. Three outputs give `[z, p, k]`. They use the bilinear transform with prewarping. `[numd, dend] = bilinear(num, den, fs, fp)` and `[zd, pd, kd] = bilinear(z, p, k, fs, fp)` map analog to digital, as in MATLAB the number of outputs selects the form, and `fp` prewarps one frequency. `[b, a] = iirnotch(w0, bw, Ab)` and `iirpeak(w0, bw, Ab)` give second-order resonators with the bandwidth at `Ab` dB (3 dB by default). With the three outputs `[z, p, k]` the roots are listed in the order MATLAB R2025a uses. An analog `b` is padded with leading zeros to the length of `a`. Not yet: `ellip`, `besself`, the `*ord` order estimates, `iircomb`, and state-space outputs.
-
-Windows (column vectors, `'periodic'` for `hann`, `hamming`, `blackman`): `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser(L, beta)`, `gausswin(L, alpha)`, `tukeywin(L, r)`. Basics: `nextpow2`, `fftshift`, `ifftshift`, `sinc`, `angle`, `cumsum`, `diff`, `unwrap`, `detrend` (`'constant'`, `'linear'`, or a polynomial order), `hilbert` (analytic signal), `xcorr` (`[c, lags] = xcorr(x, y, maxlag, 'coeff')`, scales `none`, `biased`, `unbiased`, `coeff`). Polynomials: `polyval`, `poly`, `roots`, `[q, r] = deconv(y, a)`.
-
-Filtering: `y = filter(b, a, x)` keeps the shape of `x`. `[y, zf] = filter(b, a, x, zi, dim)` takes and returns the filter state, `zi = filtic(b, a, y_past, x_past)` builds it from past samples. `filtfilt(b, a, x)` filters forward and backward with odd edge extension (zero phase), `sosfilt(sos, x)` runs second-order sections. Conversions: `[b, a] = sos2tf(sos, g)`, `[b, a] = zp2tf(z, p, k)`, `[z, p, k] = tf2zp(b, a)`. Responses: `[h, w] = freqz(b, a, n, fs, 'whole')` (grid `(0:n-1) * pi / n`, 512 points by default, or a vector of points), `phasez`, `[gd, w] = grpdelay(b, a, n, 'whole')`, `[h, t] = impz(b, a, n, fs)`, `stepz`, and `freqs(b, a, w)` (a vector of rad/s; a point count is not supported yet). Without `n`, `impz` and `stepz` use the length MATLAB R2025a returns for the cases checked: the response runs until the slowest pole has decayed to 5e-5 (growth to 1e6 for an unstable one). All of them return values and do not plot. `conv(a, b, 'same')` and `'valid'`, the result is a column when the first input is a column. Statistics: `cov`, `corrcoef`, `xcov`. `roots` lists a conjugate pair with the positive imaginary part first.
-
-Control: `tf`, `ss`, `step`, `bode`, `pole`. `step` integrates controllable canonical form with RK4.
-
-Fixed-point: `fi(value, signed, word length, fraction length)`, `fi2hex`, `fi_write(x, 'file.txt')`, `double`. Rounding is half away from zero. Overflow saturates. `fi_write` writes one hex word per line, column-major, for VHDL testbenches.
+- [Language](docs/Language.md): scripts, matrices, cells, structs, `fi`, `tf` / `ss`
+- [Core](docs/Core.md): arrays, linear algebra, text, plots
+- [Signal Processing](docs/Signal-Processing.md): windows, filtering, IIR and FIR design, spectra, resampling. Not yet: `cwt`, `dwt`
+- [Control and fixed-point](docs/Control-and-Fixed-Point.md): `tf`, `ss`, `step`, `bode`, `fi`
+- [Search path](docs/Search-Path.md): `addpath`, `private/`, `+package`. Not yet: `@class`
+- [HIL](docs/HIL.md): loopback, UDP, TCP, and JTAG against a board profile
 
 ## Search path
 
-A name that is not a variable or a function defined in the script is looked up as an `.m` file in the current folder and then in the search path, first entry first. A function file defines the function named after the file. A script file runs in the caller's workspace. Edited files are read again on the next run.
-
-```matlab
-addpath('lib')                 % add to the front, same as '-begin'
-addpath('lib', '-end')         % add to the end; 0 and 1 work like '-begin' and '-end'
-old = addpath('a', 'b')        % returns the previous path
-addpath(genpath('toolbox'))    % a folder and its subfolders, without private, @ and + folders
-rmpath('lib'); path            % path lists, path(p) sets
-which name; exist('name')      % where a name resolves to; 1 variable, 2 file, 5 built-in, 7 folder, 103 command-line function
-run('script'); mfilename       % run a file in this workspace; name of the running file
-savepath; restoredefaultpath   % keep the path for the next start; empty the path
-```
-
-Also available: `pwd`, `cd`, `fullfile`, `fileparts`, `pathsep`, `filesep`. Relative folders are made absolute when added. A folder that does not exist gives a warning and is skipped.
-
-`savepath` writes `pathdef.txt` in `%APPDATA%\openmat` (`$XDG_CONFIG_HOME/openmat` or `~/.config/openmat` elsewhere). `OPENMAT_PATHDEF` points at another file. The CLI and the GUI load it at start.
-
-The CLI adds the folder of the script to the path. `openmat --cd script.m` changes into that folder instead. In the GUI, **Run** and **Step** ask whether to **Change Folder** or **Add to Path** when the script's folder is neither the current folder nor on the path. **Path...** in the toolbar edits the search path: reorder, remove, add a folder, and **Save**.
-
-Folders named `private` hold functions that only files in the parent folder, and other files in that `private` folder, can call. They win over functions of the same name on the path. A `+pkg` folder is a package: `+pkg/fn.m` is called as `pkg.fn(...)`, and `+a/+b/fn.m` as `a.b.fn(...)`. The extra functions in a function file are local to that file.
-
-Not supported yet: `@class` folders.
+A name that is not a variable or a function in the script is looked up as an `.m` file in the current folder, then on the search path. `addpath`, `rmpath`, `path`, `genpath`, `which`, `exist`, `run`, and `savepath` are built in. The CLI adds the script folder to the path. `openmat --cd script.m` changes into that folder instead. Details and `private/` / `+package` rules are on the [search path](docs/Search-Path.md) page.
 
 ## HIL
 
-```matlab
-h = hil.open('loopback');
-h = hil.open('udp', '192.168.2.99', 5000);
-h = hil.open('tcp', '192.168.2.99', 5000);
-h = hil.open('jtag', 'pynq_rfsoc4x2');
-hil.write(h, [1 2 3]);
-y = hil.read(h, 3);
-hil.regwrite(h, 0, 42);
-v = hil.regread(h, 0);
-hil.close(h);
-```
-
-Frame: magic `OMAT`, version, opcode, address, length, payload, CRC-32. Opcodes: Write=1, Read=2, RegWrite=3, RegRead=4, Ack=5, Err=6. Samples are little-endian `f64`.
-
-Board profiles live in `boards/`. `boards/pynq_rfsoc4x2.toml` describes the PYNQ RFSoC 4x2 (XCZU48DR). `boards/explorer.toml` is only the format for the FPGA Horizons Explorer board (spring 2027). A new board is another TOML file, not a code change. `OPENMAT_BOARDS` points at another directory.
-
-### PYNQ RFSoC 4x2
-
-1. Build `openmat-agent` for `aarch64-unknown-linux-gnu` and copy it to the board. On Windows, Zig is the linker, because `aarch64-unknown-linux-gnu` expects a Linux `cc`.
-2. On the board: `./openmat-agent --proto udp --bind 0.0.0.0:5000`. The message `listening on 0.0.0.0:5000 (udp)` means the agent is ready.
-3. `hil.open('udp', host, port)` takes the host and port from the call, not from `ethernet.host` in the board profile. `examples/hil.m` talks to `192.168.178.98` port 5000. The address in the script is the board's address. `fprintf` prints `v` and `y`.
-4. The supplied agent keeps registers and samples in memory. The VHDL sources under `hdl/` (`openmat_axi_regs`, `openmat_fifo`, `openmat_packet`) are the PL counterpart: AXI register bank, FIFO, and frame parser. Addresses 0, 4, 8, and 12 are scratch, length, status, and control.
-
-JTAG uses Vivado in batch mode and JTAG-to-AXI. `OPENMAT_VIVADO` points at the `vivado` executable. Without Vivado, `hil.open('jtag', ...)` fails with a clear message. `hil.open('jtag-mock', 'pynq_rfsoc4x2')` checks the profile without hardware. Sample streams use Ethernet. Register access uses Ethernet or JTAG.
-
-The loopback transport and the protocol tests run without a board: `cargo run -p openmat-cli -- examples/hil_loopback.m`. Against the board: `cargo run -p openmat-cli -- examples/hil.m`, while the agent listens on UDP port 5000.
+`hil.open`, `hil.write`, `hil.read`, `hil.regwrite`, `hil.regread`, and `hil.close` talk to a loopback target or to `openmat-agent` over UDP or TCP. JTAG uses Vivado. Board profiles live in `boards/`. The frame layout and the PYNQ RFSoC 4x2 steps are on the [HIL](docs/HIL.md) page. Without a board: `cargo run -p openmat-cli -- examples/hil_loopback.m`.
 
 ## Examples
 
