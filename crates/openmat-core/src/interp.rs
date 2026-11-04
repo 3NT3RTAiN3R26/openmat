@@ -336,6 +336,7 @@ impl Session {
                         .get(field)
                         .cloned()
                         .ok_or_else(|| MatError::new(format!("no field '{field}'"))),
+                    Value::Fi(fi) => fi.property(field),
                     Value::Func(FuncHandle::Named(name)) => {
                         Ok(Value::Func(FuncHandle::Named(format!("{name}.{field}"))))
                     }
@@ -407,22 +408,21 @@ impl Session {
 
     fn fi_binary(&mut self, op: BinOp, left: Value, right: Value) -> MatResult<Value> {
         let (fi_l, fi_r) = (as_fi(&left)?, as_fi(&right)?);
-        let format = fi_l.clone();
-        let a = fi_l.to_matrix();
-        let b = fi_r.to_matrix();
-        let numeric = match op {
-            BinOp::Add => a.ew(&b, |x, y| x + y)?,
-            BinOp::Sub => a.ew(&b, |x, y| x - y)?,
-            BinOp::Mul | BinOp::DotMul => a.matmul(&b)?,
-            BinOp::Div | BinOp::DotDiv => a.ew(&b, |x, y| x / y)?,
+        let name = match op {
+            BinOp::Add => "add",
+            BinOp::Sub => "sub",
+            BinOp::Mul => "mul",
+            BinOp::DotMul => "dotmul",
+            BinOp::Div | BinOp::DotDiv => "div",
+            BinOp::Eq => "eq",
+            BinOp::Ne => "ne",
+            BinOp::Lt => "lt",
+            BinOp::Gt => "gt",
+            BinOp::Le => "le",
+            BinOp::Ge => "ge",
             _ => return Err(MatError::new("that operator is not supported for fi values")),
         };
-        Ok(Value::Fi(crate::value::Fi::from_matrix(
-            &numeric,
-            format.signed,
-            format.word,
-            format.frac,
-        )?))
+        crate::value::Fi::binary_op(&fi_l, &fi_r, name)
     }
 
     fn eval_matrix(&mut self, rows: &[Vec<Expr>]) -> MatResult<Value> {

@@ -252,11 +252,107 @@ impl Matrix {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rounding {
+    Nearest,
+    Convergent,
+    Round,
+    Floor,
+    Ceiling,
+    Zero,
+}
+
+impl Rounding {
+    pub fn parse(name: &str) -> MatResult<Self> {
+        match name {
+            "Nearest" => Ok(Self::Nearest),
+            "Convergent" => Ok(Self::Convergent),
+            "Round" => Ok(Self::Round),
+            "Floor" => Ok(Self::Floor),
+            "Ceiling" => Ok(Self::Ceiling),
+            "Zero" => Ok(Self::Zero),
+            _ => Err(MatError::new(format!("unknown RoundingMethod '{name}'"))),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Nearest => "Nearest",
+            Self::Convergent => "Convergent",
+            Self::Round => "Round",
+            Self::Floor => "Floor",
+            Self::Ceiling => "Ceiling",
+            Self::Zero => "Zero",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overflow {
+    Saturate,
+    Wrap,
+}
+
+impl Overflow {
+    pub fn parse(name: &str) -> MatResult<Self> {
+        match name {
+            "Saturate" => Ok(Self::Saturate),
+            "Wrap" => Ok(Self::Wrap),
+            _ => Err(MatError::new(format!("unknown OverflowAction '{name}'"))),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Saturate => "Saturate",
+            Self::Wrap => "Wrap",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrecMode {
+    FullPrecision,
+    KeepLSB,
+    KeepMSB,
+    SpecifyPrecision,
+}
+
+impl PrecMode {
+    pub fn parse(name: &str) -> MatResult<Self> {
+        match name {
+            "FullPrecision" => Ok(Self::FullPrecision),
+            "KeepLSB" => Ok(Self::KeepLSB),
+            "KeepMSB" => Ok(Self::KeepMSB),
+            "SpecifyPrecision" => Ok(Self::SpecifyPrecision),
+            _ => Err(MatError::new(format!("unknown precision mode '{name}'"))),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::FullPrecision => "FullPrecision",
+            Self::KeepLSB => "KeepLSB",
+            Self::KeepMSB => "KeepMSB",
+            Self::SpecifyPrecision => "SpecifyPrecision",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Fi {
     pub signed: bool,
     pub word: u32,
     pub frac: i32,
+    pub rounding: Rounding,
+    pub overflow: Overflow,
+    pub product_mode: PrecMode,
+    pub sum_mode: PrecMode,
+    pub cast_before_sum: bool,
+    pub product_word: u32,
+    pub product_frac: i32,
+    pub sum_word: u32,
+    pub sum_frac: i32,
     pub rows: usize,
     pub cols: usize,
     pub raw: Vec<i64>,
@@ -264,37 +360,277 @@ pub struct Fi {
 
 impl Fi {
     pub fn quantize(val: f64, signed: bool, word: u32, frac: i32) -> MatResult<i64> {
+        Self::quantize_mode(val, signed, word, frac, Rounding::Nearest, Overflow::Saturate)
+    }
+
+    pub fn quantize_mode(
+        val: f64,
+        signed: bool,
+        word: u32,
+        frac: i32,
+        rounding: Rounding,
+        overflow: Overflow,
+    ) -> MatResult<i64> {
         if !(1..=62).contains(&word) {
             return Err(MatError::new("word length must be between 1 and 62"));
         }
         let scale = 2f64.powi(frac);
-        let mut raw = (val * scale).round();
-        if !raw.is_finite() {
+        let scaled = val * scale;
+        if !scaled.is_finite() {
             return Err(MatError::new("cannot quantize a non-finite value"));
         }
+        let rounded = match rounding {
+            Rounding::Floor => scaled.floor(),
+            Rounding::Ceiling => scaled.ceil(),
+            Rounding::Zero => scaled.trunc(),
+            Rounding::Nearest => (scaled + 0.5).floor(),
+            Rounding::Round => {
+                if scaled == 0.0 {
+                    0.0
+                } else {
+                    scaled.signum() * (scaled.abs() + 0.5).floor()
+                }
+            }
+            Rounding::Convergent => {
+                let floor = scaled.floor();
+                let diff = scaled - floor;
+                if (diff - 0.5).abs() > 1e-12 {
+                    if diff > 0.5 {
+                        floor + 1.0
+                    } else {
+                        floor
+                    }
+                } else if (floor as i64) % 2 == 0 {
+                    floor
+                } else {
+                    floor + 1.0
+                }
+            }
+        };
+        if !rounded.is_finite() {
+            return Err(MatError::new("cannot quantize a non-finite value"));
+        }
+        let raw = rounded as i64;
         let (min, max) = if signed {
             (-(1i64 << (word - 1)), (1i64 << (word - 1)) - 1)
         } else {
             (0, (1i64 << word) - 1)
         };
-        raw = raw.clamp(min as f64, max as f64);
-        Ok(raw as i64)
+        let stored = match overflow {
+            Overflow::Saturate => raw.clamp(min, max),
+            Overflow::Wrap => {
+                let modulus = 1i64 << word;
+                let mut bits = raw.rem_euclid(modulus);
+                if signed && bits >= (1i64 << (word - 1)) {
+                    bits -= modulus;
+                }
+                bits
+            }
+        };
+        Ok(stored)
     }
 
     pub fn from_matrix(m: &Matrix, signed: bool, word: u32, frac: i32) -> MatResult<Self> {
+        Self::from_matrix_mode(
+            m,
+            signed,
+            word,
+            frac,
+            Rounding::Nearest,
+            Overflow::Saturate,
+        )
+    }
+
+    pub fn from_matrix_mode(
+        m: &Matrix,
+        signed: bool,
+        word: u32,
+        frac: i32,
+        rounding: Rounding,
+        overflow: Overflow,
+    ) -> MatResult<Self> {
         let reals = m.reals()?;
         let raw = reals
             .into_iter()
-            .map(|v| Self::quantize(v, signed, word, frac))
+            .map(|v| Self::quantize_mode(v, signed, word, frac, rounding, overflow))
             .collect::<MatResult<Vec<_>>>()?;
         Ok(Self {
             signed,
             word,
             frac,
+            rounding,
+            overflow,
+            product_mode: PrecMode::FullPrecision,
+            sum_mode: PrecMode::FullPrecision,
+            cast_before_sum: true,
+            product_word: 32,
+            product_frac: 30,
+            sum_word: 32,
+            sum_frac: 30,
             rows: m.rows,
             cols: m.cols,
             raw,
         })
+    }
+
+    pub fn copy_fimath_from(&mut self, other: &Fi) {
+        self.rounding = other.rounding;
+        self.overflow = other.overflow;
+        self.product_mode = other.product_mode;
+        self.sum_mode = other.sum_mode;
+        self.cast_before_sum = other.cast_before_sum;
+        self.product_word = other.product_word;
+        self.product_frac = other.product_frac;
+        self.sum_word = other.sum_word;
+        self.sum_frac = other.sum_frac;
+    }
+
+    fn int_len(&self) -> i32 {
+        self.word as i32 - self.frac
+    }
+
+    pub fn sum_format(&self, other: &Fi) -> (bool, u32, i32) {
+        self.result_format(other, true)
+    }
+
+    pub fn product_format(&self, other: &Fi) -> (bool, u32, i32) {
+        self.result_format(other, false)
+    }
+
+    fn result_format(&self, other: &Fi, is_sum: bool) -> (bool, u32, i32) {
+        let mode = if is_sum { self.sum_mode } else { self.product_mode };
+        let specified = if is_sum {
+            (self.sum_word, self.sum_frac)
+        } else {
+            (self.product_word, self.product_frac)
+        };
+        let full_frac = if is_sum {
+            self.frac.max(other.frac)
+        } else {
+            self.frac.saturating_add(other.frac)
+        };
+        let full_word = if is_sum {
+            let il = self.int_len().max(other.int_len()) + 1;
+            (il + full_frac).max(1) as u32
+        } else {
+            self.word.saturating_add(other.word)
+        };
+        let (word, frac) = match mode {
+            PrecMode::FullPrecision => (full_word, full_frac),
+            PrecMode::SpecifyPrecision => specified,
+            PrecMode::KeepLSB => (self.word.max(other.word), full_frac),
+            PrecMode::KeepMSB => {
+                let word = self.word.max(other.word);
+                let dropped = full_word.saturating_sub(word) as i32;
+                (word, full_frac - dropped)
+            }
+        };
+        let word = word.clamp(1, 62);
+        (self.signed || other.signed, word, frac)
+    }
+
+    pub fn cast_real(&self, value: f64, signed: bool, word: u32, frac: i32) -> MatResult<i64> {
+        Self::quantize_mode(value, signed, word, frac, self.rounding, self.overflow)
+    }
+
+    pub fn binary_op(left: &Fi, right: &Fi, op: &str) -> MatResult<Value> {
+        let compare = matches!(op, "eq" | "ne" | "lt" | "gt" | "le" | "ge");
+        if compare {
+            return Ok(Value::Matrix(compare_fi(left, right, op)?));
+        }
+        let (signed, word, frac) = match op {
+            "add" | "sub" => left.sum_format(right),
+            "mul" | "dotmul" | "div" | "dotdiv" => left.product_format(right),
+            _ => return Err(MatError::new("that operator is not supported for fi values")),
+        };
+        let (rows, cols) = broadcast_shape(left.rows, left.cols, right.rows, right.cols)?;
+        let mut raw = Vec::with_capacity(rows * cols);
+        let scalar = left.rows * left.cols <= 1 || right.rows * right.cols <= 1;
+        if op == "mul" && !scalar {
+            if left.cols != right.rows {
+                return Err(MatError::new("matrix dimensions must agree"));
+            }
+            let (rows, cols) = (left.rows, right.cols);
+            let acc_frac = left.frac.saturating_add(right.frac);
+            let extra = (left.cols as f64).log2().ceil() as u32;
+            let word = if left.product_mode == PrecMode::FullPrecision {
+                word.saturating_add(extra).clamp(1, 62)
+            } else {
+                word
+            };
+            for c in 0..cols {
+                for r in 0..rows {
+                    let mut acc = 0i128;
+                    for k in 0..left.cols {
+                        acc += left.at(r, k) as i128 * right.at(k, c) as i128;
+                    }
+                    raw.push(cast_bits(acc, acc_frac, signed, word, frac, left.rounding, left.overflow)?);
+                }
+            }
+            return Ok(Value::Fi(Fi::from_raw(signed, word, frac, left, rows, cols, raw)?));
+        }
+        for c in 0..cols {
+            for r in 0..rows {
+                let a = left.at(r, c);
+                let b = right.at(r, c);
+                let stored = match op {
+                    "add" | "sub" => add_stored(left, right, a, b, op == "sub", signed, word, frac)?,
+                    "mul" | "dotmul" => {
+                        let prod = a as i128 * b as i128;
+                        cast_bits(prod, left.frac.saturating_add(right.frac), signed, word, frac, left.rounding, left.overflow)?
+                    }
+                    "div" | "dotdiv" => div_stored(left, right, a, b, signed, word, frac)?,
+                    _ => unreachable!(),
+                };
+                raw.push(stored);
+            }
+        }
+        Ok(Value::Fi(Fi::from_raw(signed, word, frac, left, rows, cols, raw)?))
+    }
+
+    fn at(&self, r: usize, c: usize) -> i64 {
+        let rr = if self.rows <= 1 { 0 } else { r };
+        let cc = if self.cols <= 1 { 0 } else { c };
+        self.raw[cc * self.rows.max(1) + rr]
+    }
+
+    fn from_raw(signed: bool, word: u32, frac: i32, fimath: &Fi, rows: usize, cols: usize, raw: Vec<i64>) -> MatResult<Self> {
+        let mut out = Fi::from_matrix_mode(&Matrix::scalar(0.0), signed, word, frac, fimath.rounding, fimath.overflow)?;
+        out.copy_fimath_from(fimath);
+        out.rows = rows;
+        out.cols = cols;
+        out.raw = raw;
+        Ok(out)
+    }
+
+    pub fn property(&self, name: &str) -> MatResult<Value> {
+        match name {
+            "WordLength" => Ok(Value::scalar(self.word as f64)),
+            "FractionLength" => Ok(Value::scalar(self.frac as f64)),
+            "Signed" => Ok(Value::logical(self.signed)),
+            "RoundingMethod" => Ok(Value::Char(self.rounding.name().to_string())),
+            "OverflowAction" => Ok(Value::Char(self.overflow.name().to_string())),
+            "ProductMode" => Ok(Value::Char(self.product_mode.name().to_string())),
+            "SumMode" => Ok(Value::Char(self.sum_mode.name().to_string())),
+            "CastBeforeSum" => Ok(Value::logical(self.cast_before_sum)),
+            "ProductWordLength" => Ok(Value::scalar(self.product_word as f64)),
+            "ProductFractionLength" => Ok(Value::scalar(self.product_frac as f64)),
+            "SumWordLength" => Ok(Value::scalar(self.sum_word as f64)),
+            "SumFractionLength" => Ok(Value::scalar(self.sum_frac as f64)),
+            _ => Err(MatError::new(format!("no fi property '{name}'"))),
+        }
+    }
+
+    pub fn stored_mask(&self) -> u64 {
+        if self.word >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.word) - 1
+        }
+    }
+
+    pub fn digits(&self, base_bits: usize) -> usize {
+        (self.word as usize).div_ceil(base_bits)
     }
 
     pub fn to_f64(&self, raw: i64) -> f64 {
@@ -364,6 +700,146 @@ pub enum Value {
     Fi(Fi),
     System(System),
     Multi(Vec<Value>),
+}
+
+fn broadcast_shape(ar: usize, ac: usize, br: usize, bc: usize) -> MatResult<(usize, usize)> {
+    let rows = if ar == br || br == 1 { ar } else if ar == 1 { br } else {
+        return Err(MatError::new("matrix dimensions must agree"));
+    };
+    let cols = if ac == bc || bc == 1 { ac } else if ac == 1 { bc } else {
+        return Err(MatError::new("matrix dimensions must agree"));
+    };
+    Ok((rows, cols))
+}
+
+fn compare_fi(left: &Fi, right: &Fi, op: &str) -> MatResult<Matrix> {
+    let (rows, cols) = broadcast_shape(left.rows, left.cols, right.rows, right.cols)?;
+    let frac = left.frac.max(right.frac);
+    let mut data = Vec::with_capacity(rows * cols);
+    for c in 0..cols {
+        for r in 0..rows {
+            let a = cast_shift(left.at(r, c) as i128, left.frac, frac);
+            let b = cast_shift(right.at(r, c) as i128, right.frac, frac);
+            let flag = match op {
+                "eq" => a == b,
+                "ne" => a != b,
+                "lt" => a < b,
+                "gt" => a > b,
+                "le" => a <= b,
+                "ge" => a >= b,
+                _ => false,
+            };
+            data.push(Complex64::from(if flag { 1.0 } else { 0.0 }));
+        }
+    }
+    Ok(Matrix { rows, cols, data, logical: true })
+}
+
+fn cast_shift(raw: i128, from_frac: i32, to_frac: i32) -> i128 {
+    let delta = to_frac - from_frac;
+    if delta >= 0 { raw << delta as u32 } else { raw >> (-delta) as u32 }
+}
+
+fn shift_round(raw: i128, k: u32, rounding: Rounding) -> i128 {
+    if k == 0 { return raw; }
+    if k >= 120 { return if raw < 0 { -1 } else { 0 }; }
+    let half = 1i128 << (k - 1);
+    let floor = raw >> k;
+    let lost = raw - (floor << k);
+    match rounding {
+        Rounding::Floor => floor,
+        Rounding::Ceiling => if lost != 0 { floor + 1 } else { floor },
+        Rounding::Zero => if raw < 0 && lost != 0 { floor + 1 } else { floor },
+        Rounding::Nearest => if lost >= half { floor + 1 } else { floor },
+        Rounding::Round => {
+            if raw >= 0 {
+                if lost >= half { floor + 1 } else { floor }
+            } else if lost == 0 || lost > half {
+                if lost == 0 { floor } else { floor + 1 }
+            } else {
+                floor
+            }
+        }
+        Rounding::Convergent => {
+            if lost == 0 || lost < half { floor }
+            else if lost > half { floor + 1 }
+            else if floor % 2 == 0 { floor }
+            else { floor + 1 }
+        }
+    }
+}
+
+fn cast_bits(raw: i128, from_frac: i32, signed: bool, word: u32, to_frac: i32, rounding: Rounding, overflow: Overflow) -> MatResult<i64> {
+    if !(1..=62).contains(&word) {
+        return Err(MatError::new("word length must be between 1 and 62"));
+    }
+    let shifted = if to_frac >= from_frac {
+        let k = (to_frac - from_frac) as u32;
+        if k >= 120 { return Err(MatError::new("fraction length is too large")); }
+        raw << k
+    } else {
+        shift_round(raw, (from_frac - to_frac) as u32, rounding)
+    };
+    let (min, max) = if signed {
+        (-(1i128 << (word - 1)), (1i128 << (word - 1)) - 1)
+    } else {
+        (0, (1i128 << word) - 1)
+    };
+    let stored = match overflow {
+        Overflow::Saturate => shifted.clamp(min, max),
+        Overflow::Wrap => {
+            let modulus = 1i128 << word;
+            let mut bits = shifted.rem_euclid(modulus);
+            if signed && bits >= (1i128 << (word - 1)) { bits -= modulus; }
+            bits
+        }
+    };
+    Ok(stored as i64)
+}
+
+fn add_stored(left: &Fi, right: &Fi, a: i64, b: i64, sub: bool, signed: bool, word: u32, frac: i32) -> MatResult<i64> {
+    let (a, a_frac, b, b_frac) = if left.cast_before_sum {
+        (
+            cast_bits(a as i128, left.frac, signed, word, frac, left.rounding, left.overflow)? as i128,
+            frac,
+            cast_bits(b as i128, right.frac, signed, word, frac, left.rounding, left.overflow)? as i128,
+            frac,
+        )
+    } else {
+        (a as i128, left.frac, b as i128, right.frac)
+    };
+    let align = a_frac.max(b_frac);
+    let sum = cast_shift(a, a_frac, align) + if sub { -cast_shift(b, b_frac, align) } else { cast_shift(b, b_frac, align) };
+    cast_bits(sum, align, signed, word, frac, left.rounding, left.overflow)
+}
+
+fn div_stored(left: &Fi, right: &Fi, a: i64, b: i64, signed: bool, word: u32, frac: i32) -> MatResult<i64> {
+    if b == 0 { return Err(MatError::new("division by zero")); }
+    let scale = frac - left.frac + right.frac;
+    let numer = if scale >= 0 { (a as i128) << scale as u32 } else { a as i128 };
+    let denom = if scale >= 0 { b as i128 } else { (b as i128) << (-scale) as u32 };
+    let quot = shift_round_div(numer, denom, left.rounding);
+    cast_bits(quot, 0, signed, word, 0, Rounding::Zero, left.overflow)
+}
+
+fn shift_round_div(numer: i128, denom: i128, rounding: Rounding) -> i128 {
+    let neg = (numer < 0) ^ (denom < 0);
+    let numer = numer.unsigned_abs();
+    let denom = denom.unsigned_abs();
+    let quot = numer / denom;
+    let rem = numer % denom;
+    let mag = match rounding {
+        Rounding::Floor => if neg && rem != 0 { quot + 1 } else { quot },
+        Rounding::Ceiling => if !neg && rem != 0 { quot + 1 } else { quot },
+        Rounding::Zero => quot,
+        Rounding::Nearest | Rounding::Round => {
+            if rem * 2 > denom || (rem * 2 == denom && (rounding == Rounding::Round || !neg)) { quot + 1 } else { quot }
+        }
+        Rounding::Convergent => {
+            if rem * 2 > denom || (rem * 2 == denom && quot % 2 == 1) { quot + 1 } else { quot }
+        }
+    };
+    if neg { -(mag as i128) } else { mag as i128 }
 }
 
 impl Value {
@@ -503,8 +979,8 @@ impl fmt::Display for Value {
             Value::Fi(fi) => {
                 write!(
                     f,
-                    "fi {}{},{}\n{}",
-                    if fi.signed { "s" } else { "u" },
+                    "DataTypeMode: Fixed-point: binary point scaling\nSignedness: {}\nWordLength: {}\nFractionLength: {}\n\n{}",
+                    if fi.signed { "Signed" } else { "Unsigned" },
                     fi.word,
                     fi.frac,
                     format_matrix(&fi.to_matrix())

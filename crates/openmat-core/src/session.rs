@@ -43,6 +43,10 @@ pub struct Session {
     /// MATLAB root property `DefaultFigureWindowStyle`.
     pub default_figure_window_style: FigureWindowStyle,
     pub nargout: usize,
+    /// Min and max real value seen for each assigned `fi` name.
+    pub fi_seen: BTreeMap<String, (f64, f64)>,
+    /// Samples collected by `NumericTypeScope`.
+    pub numeric_type_scope: Vec<f64>,
     pub rng: u64,
     pub ldiv_hook: Option<MatBin>,
     pub rdiv_hook: Option<MatBin>,
@@ -74,6 +78,8 @@ impl Session {
             new_figure_on_plot: false,
             default_figure_window_style: FigureWindowStyle::Docked,
             nargout: 1,
+            fi_seen: BTreeMap::new(),
+            numeric_type_scope: Vec::new(),
             rng: 0x1234_5678_9abc_def0,
             ldiv_hook: None,
             rdiv_hook: None,
@@ -127,6 +133,18 @@ impl Session {
     }
 
     pub fn insert(&mut self, name: String, value: Value) {
+        if let Value::Fi(fi) = &value {
+            let mut low = f64::INFINITY;
+            let mut high = f64::NEG_INFINITY;
+            for raw in &fi.raw {
+                let real = fi.to_f64(*raw);
+                low = low.min(real);
+                high = high.max(real);
+            }
+            let entry = self.fi_seen.entry(name.clone()).or_insert((low, high));
+            entry.0 = entry.0.min(low);
+            entry.1 = entry.1.max(high);
+        }
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name, value);
         } else {
@@ -147,6 +165,7 @@ impl Session {
             return;
         }
         self.vars.clear();
+        self.fi_seen.clear();
         self.install_constants();
     }
 

@@ -167,7 +167,7 @@ fn reshape(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 fn sum(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     let dim = reduction_dim(&m, args)?;
-    reduce(&m, dim, |a, b| a + b)
+    crate::util::finish_fi(&args[0], reduce(&m, dim, |a, b| a + b)?, true)
 }
 
 fn mean(_: &mut Session, args: &[Value]) -> MatResult<Value> {
@@ -175,7 +175,7 @@ fn mean(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let dim = reduction_dim(&m, args)?;
     let total = reduce(&m, dim, |a, b| a + b)?.into_matrix()?;
     let n = if dim == 1 { m.rows } else { m.cols } as f64;
-    Ok(Value::Matrix(total.map(|z| z / n)))
+    crate::util::finish_fi(&args[0], Value::Matrix(total.map(|z| z / n)), false)
 }
 
 fn reduction_dim(m: &Matrix, args: &[Value]) -> MatResult<usize> {
@@ -189,11 +189,19 @@ fn reduction_dim(m: &Matrix, args: &[Value]) -> MatResult<usize> {
 }
 
 fn min(session: &mut Session, args: &[Value]) -> MatResult<Value> {
-    extremum(session, args, |a, b| a < b)
+    let y = extremum(session, args, |a, b| a < b)?;
+    if args.is_empty() {
+        return Ok(y);
+    }
+    crate::util::finish_fi(&args[0], y, false)
 }
 
 fn max(session: &mut Session, args: &[Value]) -> MatResult<Value> {
-    extremum(session, args, |a, b| a > b)
+    let y = extremum(session, args, |a, b| a > b)?;
+    if args.is_empty() {
+        return Ok(y);
+    }
+    crate::util::finish_fi(&args[0], y, false)
 }
 
 fn extremum(_: &mut Session, args: &[Value], better: impl Fn(f64, f64) -> bool) -> MatResult<Value> {
@@ -239,21 +247,21 @@ fn map_real(args: &[Value], f: impl Fn(f64) -> Complex64) -> MatResult<Value> {
 
 fn abs(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
-    Ok(Value::Matrix(m.map(|z| Complex64::from(z.norm()))))
+    crate::util::finish_fi(&args[0], Value::Matrix(m.map(|z| Complex64::from(z.norm()))), false)
 }
 
 fn sqrt(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
-    Ok(Value::Matrix(m.map(|z| z.sqrt())))
+    crate::util::finish_fi(&args[0], Value::Matrix(m.map(|z| z.sqrt())), false)
 }
 
 fn sin(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
-    Ok(Value::Matrix(m.map(|z| z.sin())))
+    crate::util::finish_fi(&args[0], Value::Matrix(m.map(|z| z.sin())), false)
 }
 fn cos(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
-    Ok(Value::Matrix(m.map(|z| z.cos())))
+    crate::util::finish_fi(&args[0], Value::Matrix(m.map(|z| z.cos())), false)
 }
 fn tan(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;

@@ -18,4 +18,7 @@ pub use plot::{Axes, Figure, FigureWindowStyle, Series, SeriesKind};
 pub use searchpath::pathdef_file;
 pub use session::{Builtin, MatBin, Session, UserFunc};
 pub use style::{command_is_complete, format_source, lint_source, Diagnostic, Severity};
-pub use value::{format_matrix, format_number, nearly_equal, range_values, Fi, FuncHandle, Matrix, System, Value};
+pub use value::{
+    format_matrix, format_number, nearly_equal, range_values, Fi, FuncHandle, Matrix, Overflow,
+    PrecMode, Rounding, System, Value,
+};

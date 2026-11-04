@@ -2,6 +2,19 @@
 
 Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch releases.
 
+## Unreleased (0.4.0, Fixed-Point Designer)
+
+- `fi` arithmetic (`+`, `-`, `.*`, `*`, `./`, comparisons) uses the stored integers in `i128`. Sums use the sum format, products and division use the product format, and a matrix product grows by `ceil(log2(K))` in full precision. The result is still clamped at 62 bits. `fixed.add` and `fixed.sub` are the same operations; `add` and `sub` stay available as script names.
+- `numerictype`, `fimath`, and `fi(v, T, F)`. Rounding `Nearest` (ties toward +inf), `Convergent`, `Round`, `Floor`, `Ceiling`, `Zero`, and overflow `Saturate` or `Wrap`.
+- `sfi`, `ufi`, `quantize`, `bin`, `hex`, `oct`, `dec`, `storedInteger`, `hex2fi`, `fi2bin`, `fi2dec`, `lsb`, `eps`, `range`, `realmax`, `realmin`, `bestprecision`.
+- Bit operations: `bitget`, `bitset`, `bitand`, `bitor`, `bitxor`, `bitshift`, `bitsll`, `bitsrl`, `bitsra`, `bitrol`, `bitror`, `bitconcat`, `bitsliceget`, `reinterpretcast`, `removefimath`.
+- `mpy` and `divide`. `+` and `-` are the sum. `abs`, `sum`, `cumsum`, `mean`, `min`, `max`, `prod`, `sqrt`, `sin`, `cos`, and `atan2` keep an `fi` result. `sum` and `cumsum` grow the word length by `ceil(log2(N))` in full precision. `add` and `sub` are not builtins, so a script can still define those names.
+- `int` returns the stored integer. `fixed.Quantizer` and `quantizer` build a type struct that `quantize` accepts. `disp` of an `fi` prints `DataTypeMode`, `Signedness`, `WordLength`, and `FractionLength`.
+- `cordicsin`, `cordiccos`, and `cordicatan2` quantize x, y, and the residual angle into the input `fi` format on every iteration. `mxfi` records the min and max of each assigned `fi`. `fixed.autoscale(name, word, signed)` suggests a fraction length from that log. `fixed.interval` stores the two endpoints.
+- `dfilt.dffir` and `dfilt.dffirt`; `filter` on `fi` data returns `fi`. `fi_write` writes stored integers. The HIL frame in `hdl/` carries opaque payload bytes, not `fi` words, so the file is not a packet image.
+- `fixed.lutdivide(a, b, addressBits)` divides through a reciprocal lookup table. The divisor is normalized to `[1, 2)`, the table has `2^addressBits` entries (default 8), and the quotient is quantized with the product format.
+- `NumericTypeScope(x)` collects samples and opens a docked histogram. The title shows a suggested `s16` fraction length. `NumericTypeScope('reset')` clears the samples.
+
 ## 0.3.0
 
 - Windows: `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser`, `gausswin`, `tukeywin`.
