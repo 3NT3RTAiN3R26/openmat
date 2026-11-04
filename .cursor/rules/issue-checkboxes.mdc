@@ -4,3 +4,5 @@ alwaysApply: true
 ---
 
 When work completes items on a GitHub issue checklist, update that issue in the same turn. Check `- [x]` only for items that are actually done. Split a mixed line so finished parts are checked and the rest stays open. Use `gh issue edit` with the full body. Do not close the issue unless every remaining item is done or the user asks to close it.
+
+When a pull request finishes one or more issues, put a closing keyword in the PR body, one issue per line: `Fixes #123`. GitHub then closes those issues when the pull request merges into the default branch. A bare `(#123)` reference does not close the issue. Leave an issue out of `Fixes` when the pull request only mentions it and work remains.
