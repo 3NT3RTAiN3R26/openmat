@@ -2,7 +2,7 @@
 
 Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch releases.
 
-## Unreleased (0.4.0, Fixed-Point Designer)
+## 0.4.0
 
 - `fi` arithmetic (`+`, `-`, `.*`, `*`, `./`, comparisons) uses the stored integers in `i128`. Sums use the sum format, products and division use the product format, and a matrix product grows by `ceil(log2(K))` in full precision. The result is still clamped at 62 bits. `fixed.add` and `fixed.sub` are the same operations; `add` and `sub` stay available as script names.
 - `numerictype`, `fimath`, and `fi(v, T, F)`. Rounding `Nearest` (ties toward +inf), `Convergent`, `Round`, `Floor`, `Ceiling`, `Zero`, and overflow `Saturate` or `Wrap`.
