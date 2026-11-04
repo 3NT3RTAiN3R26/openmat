@@ -274,15 +274,19 @@ fn cumsum(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     let m = matrix_arg(args, 0)?;
     let dim = dim_arg(args, 1, &m)?;
     let rows = if dim == 1 { m.rows } else { m.cols };
-    Ok(Value::Matrix(along(&m, dim, rows, |x| {
-        let mut total = Complex64::new(0.0, 0.0);
-        x.iter()
-            .map(|v| {
-                total += v;
-                total
-            })
-            .collect()
-    })?))
+    crate::util::finish_fi(
+        &args[0],
+        Value::Matrix(along(&m, dim, rows, |x| {
+            let mut total = Complex64::new(0.0, 0.0);
+            x.iter()
+                .map(|v| {
+                    total += v;
+                    total
+                })
+                .collect()
+        })?),
+        true,
+    )
 }
 
 fn diff(_: &mut Session, args: &[Value]) -> MatResult<Value> {

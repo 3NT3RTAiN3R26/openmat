@@ -8,6 +8,29 @@ pub fn need(args: &[Value], n: usize) -> MatResult<()> {
     }
 }
 
+pub fn finish_fi(source: &Value, result: Value, grow: bool) -> MatResult<Value> {
+    let Value::Fi(fi) = source else {
+        return Ok(result);
+    };
+    let matrix = result.into_matrix()?;
+    let count = (fi.rows * fi.cols).max(1);
+    let extra = if grow && fi.sum_mode == openmat_core::PrecMode::FullPrecision {
+        (count as f64).log2().ceil() as u32
+    } else {
+        0
+    };
+    let mut out = openmat_core::Fi::from_matrix_mode(
+        &matrix,
+        fi.signed,
+        (fi.word + extra).min(62),
+        fi.frac,
+        fi.rounding,
+        fi.overflow,
+    )?;
+    out.copy_fimath_from(fi);
+    Ok(Value::Fi(out))
+}
+
 pub fn matrix_arg(args: &[Value], index: usize) -> MatResult<Matrix> {
     args.get(index)
         .ok_or_else(|| MatError::new("not enough arguments"))?

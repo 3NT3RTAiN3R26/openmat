@@ -238,6 +238,20 @@ mod tests {
             Value::Char(s) => assert_eq!(s, "4000"),
             other => panic!("{other}"),
         }
+        assert!((scalar("a = fi(0.5, 1, 16, 15); a.WordLength") - 16.0).abs() < 1e-9);
+        assert!((scalar("a = fi(1.5, 1, 8, 0, 'Floor', 'Saturate'); double(a)") - 1.0).abs() < 1e-9);
+        assert!((scalar("a = ufi(-1, 8, 0, 'Wrap'); double(a)") - 255.0).abs() < 1e-9);
+        assert!((scalar("a = sfi(1.25, 8, 2); double(a)") - 1.25).abs() < 1e-9);
+        match ans("bin(fi(1, 0, 4, 0))") {
+            Value::Char(s) => assert_eq!(s, "0001"),
+            other => panic!("{other}"),
+        }
+        assert!((scalar("a = fi(1, 1, 8, 0); bitget(a, 1)") - 1.0).abs() < 1e-9);
+        assert!((scalar("a = fi(-8, 1, 4, 0); double(bitsra(a, 1))") + 4.0).abs() < 1e-9);
+        assert!((scalar("a = fi(0.5, 1, 16, 15); b = a * a; b.WordLength") - 32.0).abs() < 1e-9);
+        assert!((scalar("T = numerictype(1, 8, 4); a = fi(1.5, T); a.FractionLength") - 4.0).abs() < 1e-9);
+        assert!((scalar("bestprecision(1.5, 8, 1)") - 6.0).abs() < 1e-9);
+        assert!(scalar("double(cordicsin(0))").abs() < 1e-6);
     }
 
     #[test]

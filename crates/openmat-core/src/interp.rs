@@ -336,6 +336,7 @@ impl Session {
                         .get(field)
                         .cloned()
                         .ok_or_else(|| MatError::new(format!("no field '{field}'"))),
+                    Value::Fi(fi) => fi.property(field),
                     Value::Func(FuncHandle::Named(name)) => {
                         Ok(Value::Func(FuncHandle::Named(format!("{name}.{field}"))))
                     }
@@ -413,16 +414,38 @@ impl Session {
         let numeric = match op {
             BinOp::Add => a.ew(&b, |x, y| x + y)?,
             BinOp::Sub => a.ew(&b, |x, y| x - y)?,
-            BinOp::Mul | BinOp::DotMul => a.matmul(&b)?,
+            BinOp::Mul => a.matmul(&b)?,
+            BinOp::DotMul => a.ew(&b, |x, y| x * y)?,
             BinOp::Div | BinOp::DotDiv => a.ew(&b, |x, y| x / y)?,
+            BinOp::Eq => cmp_mat(&a, &b, |x, y| x == y)?,
+            BinOp::Ne => cmp_mat(&a, &b, |x, y| x != y)?,
+            BinOp::Lt => cmp_real(&a, &b, |x, y| x < y)?,
+            BinOp::Gt => cmp_real(&a, &b, |x, y| x > y)?,
+            BinOp::Le => cmp_real(&a, &b, |x, y| x <= y)?,
+            BinOp::Ge => cmp_real(&a, &b, |x, y| x >= y)?,
             _ => return Err(MatError::new("that operator is not supported for fi values")),
         };
-        Ok(Value::Fi(crate::value::Fi::from_matrix(
+        if matches!(
+            op,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+        ) {
+            return Ok(Value::Matrix(numeric));
+        }
+        let (signed, word, frac) = match op {
+            BinOp::Add | BinOp::Sub => format.sum_format(&fi_r),
+            BinOp::Mul | BinOp::DotMul => format.product_format(&fi_r),
+            _ => (format.signed, format.word, format.frac),
+        };
+        let mut out = crate::value::Fi::from_matrix_mode(
             &numeric,
-            format.signed,
-            format.word,
-            format.frac,
-        )?))
+            signed,
+            word,
+            frac,
+            format.rounding,
+            format.overflow,
+        )?;
+        out.copy_fimath_from(&format);
+        Ok(Value::Fi(out))
     }
 
     fn eval_matrix(&mut self, rows: &[Vec<Expr>]) -> MatResult<Value> {

@@ -2,6 +2,16 @@
 
 Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch releases.
 
+## Unreleased (0.4.0, Fixed-Point Designer)
+
+- `fi` carries `RoundingMethod`, `OverflowAction`, `ProductMode`, `SumMode` (`FullPrecision`, `KeepLSB`, `KeepMSB`, `SpecifyPrecision`), `CastBeforeSum`, and the specify-precision word and fraction lengths. `+` and `-` use the sum format; `*` and `.*` use the product format. Full precision gives a sum word length of `max(integer lengths) + fraction length + 1` and a product of `WL1+WL2` by `FL1+FL2`, clamped at 62 bits. Division stays in the left-hand format. Products wider than the f64 mantissa are not bit-exact.
+- `numerictype`, `fimath`, and `fi(v, T, F)`. Rounding `Nearest` (ties toward +inf), `Convergent`, `Round`, `Floor`, `Ceiling`, `Zero`, and overflow `Saturate` or `Wrap`.
+- `sfi`, `ufi`, `quantize`, `bin`, `hex`, `oct`, `dec`, `storedInteger`, `hex2fi`, `fi2bin`, `fi2dec`, `lsb`, `eps`, `range`, `realmax`, `realmin`, `bestprecision`.
+- Bit operations: `bitget`, `bitset`, `bitand`, `bitor`, `bitxor`, `bitshift`, `bitsll`, `bitsrl`, `bitsra`, `bitrol`, `bitror`, `bitconcat`, `bitsliceget`, `reinterpretcast`, `removefimath`.
+- `mpy` and `divide`. `+` and `-` are the sum. `abs`, `sum`, `cumsum`, `mean`, `min`, `max`, `prod`, `sqrt`, `sin`, `cos`, and `atan2` keep an `fi` result. `sum` and `cumsum` grow the word length by `ceil(log2(N))` in full precision. `add` and `sub` are not builtins, so a script can still define those names.
+- `cordicsin`, `cordiccos`, `cordicatan2` (24 iterations, quantized at the end when the input is `fi`). `dfilt.dffir` and `dfilt.dffirt`; `filter` on `fi` data returns `fi`. `fi_write(x, file, 'hex'|'bin'|'dec')` writes signedness, word length, and fraction length on the first line.
+- Not yet: per-stage CORDIC quantization, `NumericTypeScope`, and `fiaccel`.
+
 ## 0.3.0
 
 - Windows: `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser`, `gausswin`, `tukeywin`.

@@ -112,7 +112,28 @@ fn dimension(args: &[Value], index: usize, m: &Matrix) -> MatResult<usize> {
 }
 
 fn filter(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    if args.len() == 2 {
+        if let Value::Struct(map) = &args[0] {
+            if map.contains_key("form") {
+                let b = map.get("b").cloned().ok_or_else(|| MatError::new("dfilt has no numerator"))?;
+                let one = Value::scalar(1.0);
+                return filter(session, &[b, one, args[1].clone()]);
+            }
+        }
+    }
     need(args, 3)?;
+    if let Some(Value::Fi(fi)) = args.get(2) {
+        let mut numeric = args.to_vec();
+        numeric[2] = Value::Matrix(fi.to_matrix());
+        let y = filter(session, &numeric)?;
+        return match y {
+            Value::Multi(mut parts) => {
+                parts[0] = crate::util::finish_fi(&args[2], parts[0].clone(), false)?;
+                Ok(Value::Multi(parts))
+            }
+            other => crate::util::finish_fi(&args[2], other, false),
+        };
+    }
     let (b, a) = normalized(&coefficients(args, 0)?, &coefficients(args, 1)?)?;
     let x = matrix_arg(args, 2)?;
     let dim = dimension(args, 4, &x)?;
