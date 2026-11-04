@@ -84,6 +84,7 @@ pub fn positive(v: f64) -> MatResult<usize> {
 pub fn char_arg(args: &[Value], index: usize) -> MatResult<String> {
     match args.get(index) {
         Some(Value::Char(s)) => Ok(s.clone()),
+        Some(Value::Strings { data, .. }) if data.len() == 1 => Ok(data[0].clone()),
         Some(other) => Err(MatError::new(format!(
             "expected a string, got {}",
             other.type_name()

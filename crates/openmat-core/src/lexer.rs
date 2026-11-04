@@ -12,6 +12,8 @@ pub enum TokenKind {
     Number(f64),
     Imag(f64),
     String(String),
+    /// A MATLAB string scalar, written with double quotes.
+    MatlabString(String),
     Ident(String),
     Plus,
     Minus,
@@ -275,7 +277,11 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 self.i += 1;
-                return Ok(TokenKind::String(out));
+                return Ok(if quote == b'"' {
+                    TokenKind::MatlabString(out)
+                } else {
+                    TokenKind::String(out)
+                });
             }
             out.push(c as char);
             self.i += 1;
@@ -304,6 +310,7 @@ impl<'a> Lexer<'a> {
                     | TokenKind::RBracket
                     | TokenKind::RBrace
                     | TokenKind::String(_)
+                    | TokenKind::MatlabString(_)
                     | TokenKind::Ctrans
                     | TokenKind::DotTrans
             )
