@@ -2,7 +2,7 @@
 
 Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch releases.
 
-## Unreleased (0.3.0, Signal Processing Toolbox)
+## 0.3.0
 
 - Windows: `rectwin`, `bartlett`, `hann`, `hamming`, `blackman`, `kaiser`, `gausswin`, `tukeywin`.
 - Basics: `nextpow2`, `fftshift`, `ifftshift`, `sinc`, `angle`, `cumsum`, `diff`, `unwrap`, `detrend`, `hilbert`, `xcorr`.
