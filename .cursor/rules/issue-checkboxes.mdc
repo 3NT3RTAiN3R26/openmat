@@ -1,0 +1,6 @@
+---
+description: Mark finished GitHub issue checkboxes in the issue itself
+alwaysApply: true
+---
+
+When work completes items on a GitHub issue checklist, update that issue in the same turn. Check `- [x]` only for items that are actually done. Split a mixed line so finished parts are checked and the rest stays open. Use `gh issue edit` with the full body. Do not close the issue unless every remaining item is done or the user asks to close it.

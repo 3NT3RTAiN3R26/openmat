@@ -408,44 +408,21 @@ impl Session {
 
     fn fi_binary(&mut self, op: BinOp, left: Value, right: Value) -> MatResult<Value> {
         let (fi_l, fi_r) = (as_fi(&left)?, as_fi(&right)?);
-        let format = fi_l.clone();
-        let a = fi_l.to_matrix();
-        let b = fi_r.to_matrix();
-        let numeric = match op {
-            BinOp::Add => a.ew(&b, |x, y| x + y)?,
-            BinOp::Sub => a.ew(&b, |x, y| x - y)?,
-            BinOp::Mul => a.matmul(&b)?,
-            BinOp::DotMul => a.ew(&b, |x, y| x * y)?,
-            BinOp::Div | BinOp::DotDiv => a.ew(&b, |x, y| x / y)?,
-            BinOp::Eq => cmp_mat(&a, &b, |x, y| x == y)?,
-            BinOp::Ne => cmp_mat(&a, &b, |x, y| x != y)?,
-            BinOp::Lt => cmp_real(&a, &b, |x, y| x < y)?,
-            BinOp::Gt => cmp_real(&a, &b, |x, y| x > y)?,
-            BinOp::Le => cmp_real(&a, &b, |x, y| x <= y)?,
-            BinOp::Ge => cmp_real(&a, &b, |x, y| x >= y)?,
+        let name = match op {
+            BinOp::Add => "add",
+            BinOp::Sub => "sub",
+            BinOp::Mul => "mul",
+            BinOp::DotMul => "dotmul",
+            BinOp::Div | BinOp::DotDiv => "div",
+            BinOp::Eq => "eq",
+            BinOp::Ne => "ne",
+            BinOp::Lt => "lt",
+            BinOp::Gt => "gt",
+            BinOp::Le => "le",
+            BinOp::Ge => "ge",
             _ => return Err(MatError::new("that operator is not supported for fi values")),
         };
-        if matches!(
-            op,
-            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
-        ) {
-            return Ok(Value::Matrix(numeric));
-        }
-        let (signed, word, frac) = match op {
-            BinOp::Add | BinOp::Sub => format.sum_format(&fi_r),
-            BinOp::Mul | BinOp::DotMul => format.product_format(&fi_r),
-            _ => (format.signed, format.word, format.frac),
-        };
-        let mut out = crate::value::Fi::from_matrix_mode(
-            &numeric,
-            signed,
-            word,
-            frac,
-            format.rounding,
-            format.overflow,
-        )?;
-        out.copy_fimath_from(&format);
-        Ok(Value::Fi(out))
+        crate::value::Fi::binary_op(&fi_l, &fi_r, name)
     }
 
     fn eval_matrix(&mut self, rows: &[Vec<Expr>]) -> MatResult<Value> {

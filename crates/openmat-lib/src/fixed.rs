@@ -51,6 +51,16 @@ pub fn register(session: &mut Session) {
     session.register_builtin("eps", lsb);
     session.register_builtin("prod", prod_fn);
     session.register_builtin("atan2", atan2_fn);
+    session.register_builtin("int", stored_integer);
+    session.register_builtin("fixed.Quantizer", fixed_quantizer);
+    session.register_builtin("quantizer", quantizer_fn);
+    session.register_builtin("fixed.add", fixed_add);
+    session.register_builtin("fixed.sub", fixed_sub);
+    session.register_builtin("mxfi", mxfi);
+    session.register_builtin("fixed.autoscale", autoscale);
+    session.register_builtin("fixed.interval", fixed_interval);
+    session.register_builtin("fixed.lutdivide", lutdivide);
+    session.register_builtin("NumericTypeScope", numeric_type_scope);
     session.register_builtin("dfilt.dffir", dffir);
     session.register_builtin("dfilt.dffirt", dffirt);
 }
@@ -418,6 +428,9 @@ fn fimath(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 }
 
 fn quantize(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    if args.get(1).is_some_and(|value| matches!(value, Value::Struct(_))) {
+        return fi_typed(args);
+    }
     fi(&mut Session::new(), args)
 }
 
@@ -624,6 +637,14 @@ fn removefimath(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 }
 
 fn mpy_fn(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    fixed_bin(args, "dotmul")
+}
+
+fn divide_fn(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    fixed_bin(args, "div")
+}
+
+fn fixed_bin(args: &[Value], op: &str) -> MatResult<Value> {
     need(args, 2)?;
     let left = match &args[0] {
         Value::Fi(fi) => fi.clone(),
@@ -633,35 +654,37 @@ fn mpy_fn(_: &mut Session, args: &[Value]) -> MatResult<Value> {
         Value::Fi(fi) => fi.clone(),
         other => Fi::from_matrix_mode(&other.clone().into_matrix()?, left.signed, left.word, left.frac, left.rounding, left.overflow)?,
     };
-    let (signed, word, frac) = left.product_format(&right);
-    let numeric = left.to_matrix().ew(&right.to_matrix(), |x, y| x * y)?;
-    let mut out = Fi::from_matrix_mode(&numeric, signed, word, frac, left.rounding, left.overflow)?;
-    out.copy_fimath_from(&left);
-    Ok(Value::Fi(out))
+    Fi::binary_op(&left, &right, op)
 }
 
-fn divide_fn(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    need(args, 2)?;
-    let left = expect_fi(args)?.clone();
-    let right = args[1].clone().into_matrix()?;
-    let numeric = left.to_matrix().ew(&right, |x, y| x / y)?;
-    let mut out = Fi::from_matrix_mode(&numeric, left.signed, left.word, left.frac, left.rounding, left.overflow)?;
-    out.copy_fimath_from(&left);
-    Ok(Value::Fi(out))
+fn fixed_add(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    fixed_bin(args, "add")
 }
 
-fn cordic_pair(angle: f64, steps: usize) -> (f64, f64) {
-    let mut x = 0.6072529350088814;
-    let mut y = 0.0;
+fn fixed_sub(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    fixed_bin(args, "sub")
+}
+
+fn qstep(value: f64, fi: Option<&Fi>) -> f64 {
+    let Some(fi) = fi else { return value };
+    match Fi::quantize_mode(value, fi.signed, fi.word, fi.frac, fi.rounding, fi.overflow) {
+        Ok(raw) => fi.to_f64(raw),
+        Err(_) => value,
+    }
+}
+
+fn cordic_pair(angle: f64, steps: usize, fmt: Option<&Fi>) -> (f64, f64) {
+    let mut x = qstep(0.6072529350088814, fmt);
+    let mut y = qstep(0.0, fmt);
     let mut z = angle;
     for i in 0..steps {
         let direction = if z >= 0.0 { 1.0 } else { -1.0 };
         let shift = 2f64.powi(-(i as i32));
-        let next_x = x - direction * y * shift;
-        let next_y = y + direction * x * shift;
+        let next_x = qstep(x - direction * y * shift, fmt);
+        let next_y = qstep(y + direction * x * shift, fmt);
         x = next_x;
         y = next_y;
-        z -= direction * shift.atan();
+        z = qstep(z - direction * shift.atan(), fmt);
     }
     (y, x)
 }
@@ -680,30 +703,33 @@ fn cordic_out(args: &[Value], value: f64) -> MatResult<Value> {
 fn cordicsin(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 1)?;
     let angle = args[0].real_scalar()?;
-    let (sine, _) = cordic_pair(angle, 24);
+    let fmt = match args.first() { Some(Value::Fi(fi)) => Some(fi), _ => None };
+    let (sine, _) = cordic_pair(angle, 24, fmt);
     cordic_out(args, sine)
 }
 
 fn cordiccos(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 1)?;
     let angle = args[0].real_scalar()?;
-    let (_, cosine) = cordic_pair(angle, 24);
+    let fmt = match args.first() { Some(Value::Fi(fi)) => Some(fi), _ => None };
+    let (_, cosine) = cordic_pair(angle, 24, fmt);
     cordic_out(args, cosine)
 }
 
 fn cordicatan2(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 2)?;
-    let mut y = args[0].real_scalar()?;
-    let mut x = args[1].real_scalar()?;
+    let fmt = match args.first() { Some(Value::Fi(fi)) => Some(fi), _ => None };
+    let mut y = qstep(args[0].real_scalar()?, fmt);
+    let mut x = qstep(args[1].real_scalar()?, fmt);
     let mut z = 0.0;
     for i in 0..24 {
         let direction = if y < 0.0 { 1.0 } else { -1.0 };
         let shift = 2f64.powi(-(i as i32));
-        let next_x = x - direction * y * shift;
-        let next_y = y + direction * x * shift;
+        let next_x = qstep(x - direction * y * shift, fmt);
+        let next_y = qstep(y + direction * x * shift, fmt);
         x = next_x;
         y = next_y;
-        z -= direction * shift.atan();
+        z = qstep(z - direction * shift.atan(), fmt);
     }
     cordic_out(args, z)
 }
@@ -741,6 +767,167 @@ fn realmax_fn(_: &mut Session, args: &[Value]) -> MatResult<Value> {
 
 fn realmin_fn(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     lsb(&mut Session::new(), args)
+}
+
+fn fixed_quantizer(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 3)?;
+    let mut map = BTreeMap::new();
+    map.insert("Signed".into(), Value::logical(args[0].real_scalar()? != 0.0));
+    map.insert("WordLength".into(), Value::scalar(positive(args[1].real_scalar()?)? as f64));
+    map.insert("FractionLength".into(), Value::scalar(args[2].real_scalar()?));
+    let rounding = if let Some(Value::Char(text)) = args.get(3) { text.clone() } else { "Nearest".into() };
+    let overflow = if let Some(Value::Char(text)) = args.get(4) { text.clone() } else { "Saturate".into() };
+    char_field("RoundingMethod", &rounding, &mut map);
+    char_field("OverflowAction", &overflow, &mut map);
+    Ok(Value::Struct(map))
+}
+
+fn quantizer_fn(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    let (word, frac) = if args.len() >= 2 && !is_char(&args[0]) {
+        (args[0].real_scalar()?, args[1].real_scalar()?)
+    } else if args.len() >= 4 {
+        let Value::Matrix(m) = &args[3] else {
+            return Err(MatError::new("quantizer format is [word fraction]"));
+        };
+        (m.get(0, 0).re, if m.numel() > 1 { m.get(0, 1).re.max(m.get(1, 0).re) } else { 0.0 })
+    } else {
+        (16.0, 15.0)
+    };
+    let mut map = BTreeMap::new();
+    map.insert("WordLength".into(), Value::scalar(word));
+    map.insert("FractionLength".into(), Value::scalar(frac));
+    map.insert("Signed".into(), Value::logical(true));
+    char_field("Mode", "fixed", &mut map);
+    Ok(Value::Struct(map))
+}
+
+fn mxfi(session: &mut Session, _: &[Value]) -> MatResult<Value> {
+    let mut map = BTreeMap::new();
+    for (name, (low, high)) in &session.fi_seen {
+        map.insert(name.clone(), Value::Matrix(openmat_core::Matrix::from_reals(1, 2, vec![*low, *high])));
+    }
+    Ok(Value::Struct(map))
+}
+
+fn autoscale(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 3)?;
+    let name = char_arg(args, 0)?;
+    let (low, high) = session.fi_seen.get(&name).copied().ok_or_else(|| MatError::new(format!("no fi log for {name}")))?;
+    let word = positive(args[1].real_scalar()?)? as i32;
+    let signed = args[2].real_scalar()? != 0.0;
+    let max_abs = low.abs().max(high.abs());
+    let magnitude = if max_abs <= 0.0 { 0 } else { max_abs.log2().floor() as i32 + 1 };
+    let frac = word - magnitude - if signed { 1 } else { 0 };
+    Ok(Value::scalar(frac as f64))
+}
+
+fn lutdivide(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 2)?;
+    let left = match &args[0] {
+        Value::Fi(fi) => fi.clone(),
+        other => Fi::from_matrix(&other.clone().into_matrix()?, true, 16, 15)?,
+    };
+    let right = args[1].clone().into_matrix()?.reals()?;
+    let address_bits = if args.len() >= 3 {
+        positive(args[2].real_scalar()?)?.clamp(1, 12)
+    } else {
+        8
+    };
+    let table: Vec<f64> = (0..(1usize << address_bits))
+        .map(|index| {
+            let mantissa = 1.0 + (index as f64 + 0.5) / (1u32 << address_bits) as f64;
+            1.0 / mantissa
+        })
+        .collect();
+    let numer = left.to_matrix().reals()?;
+    if numer.len() != right.len() && right.len() != 1 && numer.len() != 1 {
+        return Err(MatError::new("lutdivide inputs must have the same number of elements"));
+    }
+    let n = numer.len().max(right.len());
+    let mut values = Vec::with_capacity(n);
+    for i in 0..n {
+        let a = numer[if numer.len() == 1 { 0 } else { i }];
+        let b = right[if right.len() == 1 { 0 } else { i }];
+        if b == 0.0 {
+            return Err(MatError::new("lutdivide divisor is zero"));
+        }
+        let exponent = b.abs().log2().floor();
+        let mantissa = b.abs() / exponent.exp2();
+        let index = ((mantissa - 1.0) * (1u32 << address_bits) as f64).floor() as usize;
+        let index = index.min(table.len() - 1);
+        let quotient = a.signum() * b.signum() * a.abs() * table[index] / exponent.exp2();
+        values.push(quotient);
+    }
+    let rows = if left.rows * left.cols == n { left.rows } else { 1 };
+    let cols = if rows == 0 { 0 } else { n / rows };
+    let (signed, word, frac) = left.product_format(&left);
+    let mut out = Fi::from_matrix_mode(
+        &openmat_core::Matrix::from_reals(rows, cols, values),
+        signed,
+        word,
+        frac,
+        left.rounding,
+        left.overflow,
+    )?;
+    out.copy_fimath_from(&left);
+    Ok(Value::Fi(out))
+}
+
+fn numeric_type_scope(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    if let Some(Value::Char(text)) = args.first() {
+        if text == "reset" {
+            session.numeric_type_scope.clear();
+            return Ok(crate::util::empty());
+        }
+    }
+    if let Some(value) = args.first() {
+        if !matches!(value, Value::Char(_)) {
+            session.numeric_type_scope.extend(value.clone().into_matrix()?.reals()?);
+        }
+    }
+    let samples = session.numeric_type_scope.clone();
+    if samples.is_empty() {
+        return Err(MatError::new("NumericTypeScope has no samples"));
+    }
+    let low = samples.iter().copied().fold(f64::INFINITY, f64::min);
+    let high = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let bins = 32usize;
+    let span = (high - low).max(1e-12);
+    let mut counts = vec![0.0; bins];
+    for sample in &samples {
+        let mut index = (((sample - low) / span) * bins as f64).floor() as usize;
+        if index >= bins {
+            index = bins - 1;
+        }
+        counts[index] += 1.0;
+    }
+    let xs: Vec<f64> = (0..bins).map(|i| low + (i as f64 + 0.5) * span / bins as f64).collect();
+    let max_abs = low.abs().max(high.abs());
+    let magnitude = if max_abs <= 0.0 { 0 } else { max_abs.log2().floor() as i32 + 1 };
+    let frac = 16 - magnitude - 1;
+    let figure = session.styled_figure();
+    session.figures.push(figure);
+    session.current_figure = session.figures.len() - 1;
+    let axes = session.figures[session.current_figure].axes_mut();
+    axes.series.clear();
+    axes.series.push(openmat_core::Series {
+        xs,
+        ys: counts,
+        kind: openmat_core::SeriesKind::Stem,
+        label: "histogram".into(),
+    });
+    axes.title = format!("NumericTypeScope  suggested s16,{frac}");
+    axes.xlabel = format!("value  min {low}  max {high}");
+    axes.ylabel = "count".into();
+    Ok(Value::scalar(frac as f64))
+}
+
+fn fixed_interval(_: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 2)?;
+    let mut map = BTreeMap::new();
+    map.insert("Left".into(), Value::scalar(args[0].real_scalar()?));
+    map.insert("Right".into(), Value::scalar(args[1].real_scalar()?));
+    Ok(Value::Struct(map))
 }
 
 fn dfilt_struct(args: &[Value], form: &str) -> MatResult<Value> {

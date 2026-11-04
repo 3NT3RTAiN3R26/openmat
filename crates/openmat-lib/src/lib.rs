@@ -252,6 +252,18 @@ mod tests {
         assert!((scalar("T = numerictype(1, 8, 4); a = fi(1.5, T); a.FractionLength") - 4.0).abs() < 1e-9);
         assert!((scalar("bestprecision(1.5, 8, 1)") - 6.0).abs() < 1e-9);
         assert!(scalar("double(cordicsin(0))").abs() < 1e-6);
+        let q = scalar("double(fixed.lutdivide(fi(1, 1, 16, 8), fi(4, 1, 16, 8), 8))");
+        assert!((q - 0.25).abs() < 0.02, "{q}");
+        let scope = exec("NumericTypeScope(fi([1 2 3], 1, 16, 8));").unwrap();
+        assert_eq!(scope.figures.last().unwrap().axes[0].series.len(), 1);
+        assert!(scope.figures.last().unwrap().axes[0].title.contains("NumericTypeScope"));
+        assert!((scalar("a = fi(0.5, 1, 16, 15); b = fi(0.25, 1, 16, 15); double(a ./ b)") - 2.0).abs() < 1e-9);
+        assert!((scalar("int(fi(0.5, 1, 16, 15))") - 16384.0).abs() < 1e-9);
+        let shown = ans("fi(0.5, 1, 16, 15)");
+        let text = shown.to_string();
+        assert!(text.contains("DataTypeMode"), "{text}");
+        assert!(text.contains("WordLength: 16"), "{text}");
+        assert!((scalar("a = fi(1.5, 1, 16, 4); fixed.autoscale('a', 8, 1)") - 6.0).abs() < 1e-9);
     }
 
     #[test]

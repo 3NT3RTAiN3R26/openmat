@@ -533,6 +533,76 @@ impl Fi {
         Self::quantize_mode(value, signed, word, frac, self.rounding, self.overflow)
     }
 
+    pub fn binary_op(left: &Fi, right: &Fi, op: &str) -> MatResult<Value> {
+        let compare = matches!(op, "eq" | "ne" | "lt" | "gt" | "le" | "ge");
+        if compare {
+            return Ok(Value::Matrix(compare_fi(left, right, op)?));
+        }
+        let (signed, word, frac) = match op {
+            "add" | "sub" => left.sum_format(right),
+            "mul" | "dotmul" | "div" | "dotdiv" => left.product_format(right),
+            _ => return Err(MatError::new("that operator is not supported for fi values")),
+        };
+        let (rows, cols) = broadcast_shape(left.rows, left.cols, right.rows, right.cols)?;
+        let mut raw = Vec::with_capacity(rows * cols);
+        let scalar = left.rows * left.cols <= 1 || right.rows * right.cols <= 1;
+        if op == "mul" && !scalar {
+            if left.cols != right.rows {
+                return Err(MatError::new("matrix dimensions must agree"));
+            }
+            let (rows, cols) = (left.rows, right.cols);
+            let acc_frac = left.frac.saturating_add(right.frac);
+            let extra = (left.cols as f64).log2().ceil() as u32;
+            let word = if left.product_mode == PrecMode::FullPrecision {
+                word.saturating_add(extra).clamp(1, 62)
+            } else {
+                word
+            };
+            for c in 0..cols {
+                for r in 0..rows {
+                    let mut acc = 0i128;
+                    for k in 0..left.cols {
+                        acc += left.at(r, k) as i128 * right.at(k, c) as i128;
+                    }
+                    raw.push(cast_bits(acc, acc_frac, signed, word, frac, left.rounding, left.overflow)?);
+                }
+            }
+            return Ok(Value::Fi(Fi::from_raw(signed, word, frac, left, rows, cols, raw)?));
+        }
+        for c in 0..cols {
+            for r in 0..rows {
+                let a = left.at(r, c);
+                let b = right.at(r, c);
+                let stored = match op {
+                    "add" | "sub" => add_stored(left, right, a, b, op == "sub", signed, word, frac)?,
+                    "mul" | "dotmul" => {
+                        let prod = a as i128 * b as i128;
+                        cast_bits(prod, left.frac.saturating_add(right.frac), signed, word, frac, left.rounding, left.overflow)?
+                    }
+                    "div" | "dotdiv" => div_stored(left, right, a, b, signed, word, frac)?,
+                    _ => unreachable!(),
+                };
+                raw.push(stored);
+            }
+        }
+        Ok(Value::Fi(Fi::from_raw(signed, word, frac, left, rows, cols, raw)?))
+    }
+
+    fn at(&self, r: usize, c: usize) -> i64 {
+        let rr = if self.rows <= 1 { 0 } else { r };
+        let cc = if self.cols <= 1 { 0 } else { c };
+        self.raw[cc * self.rows.max(1) + rr]
+    }
+
+    fn from_raw(signed: bool, word: u32, frac: i32, fimath: &Fi, rows: usize, cols: usize, raw: Vec<i64>) -> MatResult<Self> {
+        let mut out = Fi::from_matrix_mode(&Matrix::scalar(0.0), signed, word, frac, fimath.rounding, fimath.overflow)?;
+        out.copy_fimath_from(fimath);
+        out.rows = rows;
+        out.cols = cols;
+        out.raw = raw;
+        Ok(out)
+    }
+
     pub fn property(&self, name: &str) -> MatResult<Value> {
         match name {
             "WordLength" => Ok(Value::scalar(self.word as f64)),
@@ -630,6 +700,146 @@ pub enum Value {
     Fi(Fi),
     System(System),
     Multi(Vec<Value>),
+}
+
+fn broadcast_shape(ar: usize, ac: usize, br: usize, bc: usize) -> MatResult<(usize, usize)> {
+    let rows = if ar == br || br == 1 { ar } else if ar == 1 { br } else {
+        return Err(MatError::new("matrix dimensions must agree"));
+    };
+    let cols = if ac == bc || bc == 1 { ac } else if ac == 1 { bc } else {
+        return Err(MatError::new("matrix dimensions must agree"));
+    };
+    Ok((rows, cols))
+}
+
+fn compare_fi(left: &Fi, right: &Fi, op: &str) -> MatResult<Matrix> {
+    let (rows, cols) = broadcast_shape(left.rows, left.cols, right.rows, right.cols)?;
+    let frac = left.frac.max(right.frac);
+    let mut data = Vec::with_capacity(rows * cols);
+    for c in 0..cols {
+        for r in 0..rows {
+            let a = cast_shift(left.at(r, c) as i128, left.frac, frac);
+            let b = cast_shift(right.at(r, c) as i128, right.frac, frac);
+            let flag = match op {
+                "eq" => a == b,
+                "ne" => a != b,
+                "lt" => a < b,
+                "gt" => a > b,
+                "le" => a <= b,
+                "ge" => a >= b,
+                _ => false,
+            };
+            data.push(Complex64::from(if flag { 1.0 } else { 0.0 }));
+        }
+    }
+    Ok(Matrix { rows, cols, data, logical: true })
+}
+
+fn cast_shift(raw: i128, from_frac: i32, to_frac: i32) -> i128 {
+    let delta = to_frac - from_frac;
+    if delta >= 0 { raw << delta as u32 } else { raw >> (-delta) as u32 }
+}
+
+fn shift_round(raw: i128, k: u32, rounding: Rounding) -> i128 {
+    if k == 0 { return raw; }
+    if k >= 120 { return if raw < 0 { -1 } else { 0 }; }
+    let half = 1i128 << (k - 1);
+    let floor = raw >> k;
+    let lost = raw - (floor << k);
+    match rounding {
+        Rounding::Floor => floor,
+        Rounding::Ceiling => if lost != 0 { floor + 1 } else { floor },
+        Rounding::Zero => if raw < 0 && lost != 0 { floor + 1 } else { floor },
+        Rounding::Nearest => if lost >= half { floor + 1 } else { floor },
+        Rounding::Round => {
+            if raw >= 0 {
+                if lost >= half { floor + 1 } else { floor }
+            } else if lost == 0 || lost > half {
+                if lost == 0 { floor } else { floor + 1 }
+            } else {
+                floor
+            }
+        }
+        Rounding::Convergent => {
+            if lost == 0 || lost < half { floor }
+            else if lost > half { floor + 1 }
+            else if floor % 2 == 0 { floor }
+            else { floor + 1 }
+        }
+    }
+}
+
+fn cast_bits(raw: i128, from_frac: i32, signed: bool, word: u32, to_frac: i32, rounding: Rounding, overflow: Overflow) -> MatResult<i64> {
+    if !(1..=62).contains(&word) {
+        return Err(MatError::new("word length must be between 1 and 62"));
+    }
+    let shifted = if to_frac >= from_frac {
+        let k = (to_frac - from_frac) as u32;
+        if k >= 120 { return Err(MatError::new("fraction length is too large")); }
+        raw << k
+    } else {
+        shift_round(raw, (from_frac - to_frac) as u32, rounding)
+    };
+    let (min, max) = if signed {
+        (-(1i128 << (word - 1)), (1i128 << (word - 1)) - 1)
+    } else {
+        (0, (1i128 << word) - 1)
+    };
+    let stored = match overflow {
+        Overflow::Saturate => shifted.clamp(min, max),
+        Overflow::Wrap => {
+            let modulus = 1i128 << word;
+            let mut bits = shifted.rem_euclid(modulus);
+            if signed && bits >= (1i128 << (word - 1)) { bits -= modulus; }
+            bits
+        }
+    };
+    Ok(stored as i64)
+}
+
+fn add_stored(left: &Fi, right: &Fi, a: i64, b: i64, sub: bool, signed: bool, word: u32, frac: i32) -> MatResult<i64> {
+    let (a, a_frac, b, b_frac) = if left.cast_before_sum {
+        (
+            cast_bits(a as i128, left.frac, signed, word, frac, left.rounding, left.overflow)? as i128,
+            frac,
+            cast_bits(b as i128, right.frac, signed, word, frac, left.rounding, left.overflow)? as i128,
+            frac,
+        )
+    } else {
+        (a as i128, left.frac, b as i128, right.frac)
+    };
+    let align = a_frac.max(b_frac);
+    let sum = cast_shift(a, a_frac, align) + if sub { -cast_shift(b, b_frac, align) } else { cast_shift(b, b_frac, align) };
+    cast_bits(sum, align, signed, word, frac, left.rounding, left.overflow)
+}
+
+fn div_stored(left: &Fi, right: &Fi, a: i64, b: i64, signed: bool, word: u32, frac: i32) -> MatResult<i64> {
+    if b == 0 { return Err(MatError::new("division by zero")); }
+    let scale = frac - left.frac + right.frac;
+    let numer = if scale >= 0 { (a as i128) << scale as u32 } else { a as i128 };
+    let denom = if scale >= 0 { b as i128 } else { (b as i128) << (-scale) as u32 };
+    let quot = shift_round_div(numer, denom, left.rounding);
+    cast_bits(quot, 0, signed, word, 0, Rounding::Zero, left.overflow)
+}
+
+fn shift_round_div(numer: i128, denom: i128, rounding: Rounding) -> i128 {
+    let neg = (numer < 0) ^ (denom < 0);
+    let numer = numer.unsigned_abs();
+    let denom = denom.unsigned_abs();
+    let quot = numer / denom;
+    let rem = numer % denom;
+    let mag = match rounding {
+        Rounding::Floor => if neg && rem != 0 { quot + 1 } else { quot },
+        Rounding::Ceiling => if !neg && rem != 0 { quot + 1 } else { quot },
+        Rounding::Zero => quot,
+        Rounding::Nearest | Rounding::Round => {
+            if rem * 2 > denom || (rem * 2 == denom && (rounding == Rounding::Round || !neg)) { quot + 1 } else { quot }
+        }
+        Rounding::Convergent => {
+            if rem * 2 > denom || (rem * 2 == denom && quot % 2 == 1) { quot + 1 } else { quot }
+        }
+    };
+    if neg { -(mag as i128) } else { mag as i128 }
 }
 
 impl Value {
@@ -769,8 +979,8 @@ impl fmt::Display for Value {
             Value::Fi(fi) => {
                 write!(
                     f,
-                    "fi {}{},{}\n{}",
-                    if fi.signed { "s" } else { "u" },
+                    "DataTypeMode: Fixed-point: binary point scaling\nSignedness: {}\nWordLength: {}\nFractionLength: {}\n\n{}",
+                    if fi.signed { "Signed" } else { "Unsigned" },
                     fi.word,
                     fi.frac,
                     format_matrix(&fi.to_matrix())
