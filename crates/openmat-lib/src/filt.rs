@@ -14,8 +14,12 @@ pub fn register(session: &mut Session) {
         ("filtfilt", filtfilt),
         ("sosfilt", sosfilt),
         ("sos2tf", sos2tf),
+        ("tf2sos", tf2sos),
+        ("zp2sos", zp2sos),
         ("zp2tf", zp2tf),
         ("tf2zp", tf2zp),
+        ("residuez", residuez),
+        ("zplane", zplane),
         ("freqs", freqs),
         ("freqz", freqz),
         ("phasez", phasez),
@@ -460,6 +464,10 @@ fn freqz(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         .iter()
         .map(|w| dtft(&b, *w) / dtft(&a, *w))
         .collect();
+    if session.nargout == 0 {
+        let mag: Vec<f64> = h.iter().map(|z| 20.0 * z.norm().max(1e-30).log10()).collect();
+        return plot_response(session, &grid.reported, &mag);
+    }
     let response = grid_value(&grid, h);
     if session.nargout >= 2 {
         Ok(Value::Multi(vec![response, grid_reals(&grid, &grid.reported)]))
@@ -509,7 +517,11 @@ fn phasez(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         .iter()
         .map(|w| dtft(&b, *w) / dtft(&a, *w))
         .collect();
-    let phase = grid_reals(&grid, &unwrapped_phase(&h));
+    let phase_values = unwrapped_phase(&h);
+    if session.nargout == 0 {
+        return plot_response(session, &grid.reported, &phase_values);
+    }
+    let phase = grid_reals(&grid, &phase_values);
     if session.nargout >= 2 {
         Ok(Value::Multi(vec![phase, grid_reals(&grid, &grid.reported)]))
     } else {
@@ -558,6 +570,9 @@ fn grpdelay(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         }
     }
     let values: Vec<f64> = delays.into_iter().map(|d| d.unwrap_or(0.0)).collect();
+    if session.nargout == 0 {
+        return plot_response(session, &grid.reported, &values);
+    }
     let delay = grid_reals(&grid, &values);
     if session.nargout >= 2 {
         Ok(Value::Multi(vec![delay, grid_reals(&grid, &grid.reported)]))
@@ -745,6 +760,632 @@ fn xcov(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         demeaned[index] = Value::Matrix(m.map(|z| z - mean));
     }
     xcorr(session, &demeaned)
+}
+
+fn plot_response(session: &mut Session, x: &[f64], y: &[f64]) -> MatResult<Value> {
+    use openmat_core::{Series, SeriesKind};
+    crate::plotb::prepare_plot_target(session);
+    let axes = session.current_figure_mut().axes_mut();
+    if !axes.hold {
+        axes.series.clear();
+    }
+    axes.series.push(Series {
+        xs: x.to_vec(),
+        ys: y.to_vec(),
+        kind: SeriesKind::Line,
+        label: String::new(),
+    });
+    Ok(crate::util::empty())
+}
+
+fn tf2sos(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 2)?;
+    let b = coefficients(args, 0)?;
+    let a = coefficients(args, 1)?;
+    let zeros = polynomial_roots(&b)?;
+    let poles = polynomial_roots(&a)?;
+    let gain = b[0] / a[0];
+    sos_from_zp(session, &zeros, &poles, gain, &args[2..])
+}
+
+fn zp2sos(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 2)?;
+    let zeros = matrix_arg(args, 0)?.data.clone();
+    let poles = matrix_arg(args, 1)?.data.clone();
+    let gain = if args.len() >= 3 && !matches!(args[2], Value::Char(_)) {
+        real_scalar(args, 2)?
+    } else {
+        1.0
+    };
+    let rest = if args.len() >= 3 && !matches!(args[2], Value::Char(_)) { &args[3..] } else { &args[2..] };
+    sos_from_zp(session, &zeros, &poles, gain, rest)
+}
+
+fn sos_from_zp(session: &mut Session, zeros: &[Complex64], poles: &[Complex64], gain: f64, options: &[Value]) -> MatResult<Value> {
+    let mut up = true;
+    let mut scale = "none";
+    for option in options {
+        let Value::Char(text) = option else {
+            return Err(MatError::new("tf2sos options must be strings"));
+        };
+        match text.to_ascii_lowercase().as_str() {
+            "up" => up = true,
+            "down" => up = false,
+            "none" => scale = "none",
+            "inf" => scale = "inf",
+            "two" => scale = "two",
+            other => return Err(MatError::new(format!("tf2sos does not know '{other}'"))),
+        }
+    }
+    let mut sections = pair_sections(zeros, poles)?;
+    sections.sort_by(|left, right| {
+        let pole = left.radius.partial_cmp(&right.radius).unwrap_or(std::cmp::Ordering::Equal);
+        // Equal pole radii keep the conjugate pair with the smaller real part first,
+        // which is the order `cplxpair` produces for a numerator-only transfer function.
+        let order = if (left.radius - right.radius).abs() < 1e-8 {
+            right.b1.partial_cmp(&left.b1).unwrap_or(pole)
+        } else {
+            pole
+        };
+        if up { order } else { order.reverse() }
+    });
+    let mut rows: Vec<[f64; 6]> = sections
+        .iter()
+        .map(|section| [1.0, section.b1, section.b2, 1.0, section.a1, section.a2])
+        .collect();
+    if rows.is_empty() {
+        rows.push([gain, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        return finish_sos(session, &rows, 1.0);
+    }
+    let g = if scale == "none" { gain } else { scale_sos(&mut rows, gain, scale) };
+    finish_sos(session, &rows, g)
+}
+
+/// Infinity-norm or 2-norm section scaling.
+/// `beta(k)` is the norm of the transfer function that reaches the input of section `k`
+/// (numerators of the earlier sections over the denominators through section `k`).
+/// Section `k` is multiplied by `beta(k) / beta(k+1)`, the last section by `beta(last)`,
+/// and the leading gain becomes `gain / beta(1)`.
+fn scale_sos(rows: &mut [[f64; 6]], gain: f64, scale: &str) -> f64 {
+    let mut beta = Vec::with_capacity(rows.len());
+    let mut numerator = vec![1.0];
+    let mut denominator = vec![1.0];
+    for (index, row) in rows.iter().enumerate() {
+        denominator = strip_trailing_zeros(convolve(&denominator, &section_den(row)));
+        beta.push(filter_norm(&numerator, &denominator, scale));
+        if index + 1 < rows.len() {
+            numerator = strip_trailing_zeros(convolve(&numerator, &[row[0], row[1], row[2]]));
+        }
+    }
+    for (index, row) in rows.iter_mut().enumerate() {
+        let factor = if index + 1 < beta.len() { beta[index] / beta[index + 1] } else { beta[index] };
+        row[0] *= factor;
+        row[1] *= factor;
+        row[2] *= factor;
+    }
+    gain / beta[0]
+}
+
+fn section_den(row: &[f64; 6]) -> Vec<f64> {
+    if row[5].abs() > 1e-14 {
+        vec![1.0, row[4], row[5]]
+    } else if row[4].abs() > 1e-14 {
+        vec![1.0, row[4]]
+    } else {
+        vec![1.0]
+    }
+}
+
+fn strip_trailing_zeros(mut coeffs: Vec<f64>) -> Vec<f64> {
+    while coeffs.len() > 1 && coeffs.last().copied().unwrap_or(0.0).abs() < 1e-14 {
+        coeffs.pop();
+    }
+    coeffs
+}
+
+fn filter_norm(num: &[f64], den: &[f64], scale: &str) -> f64 {
+    let norm = if scale == "two" { impulse_l2(num, den) } else { infinity_norm(num, den) };
+    norm.max(1e-30)
+}
+
+fn infinity_norm(num: &[f64], den: &[f64]) -> f64 {
+    let samples = 8192;
+    let mut best_w = 0.0;
+    let mut best = 0.0;
+    for k in 0..=samples {
+        let w = PI * k as f64 / samples as f64;
+        let magnitude = freq_mag(num, den, w);
+        if magnitude > best {
+            best = magnitude;
+            best_w = w;
+        }
+    }
+    let mut low = (best_w - PI / samples as f64).max(0.0);
+    let mut high = (best_w + PI / samples as f64).min(PI);
+    for _ in 0..40 {
+        let left = low + (high - low) / 3.0;
+        let right = high - (high - low) / 3.0;
+        if freq_mag(num, den, left) < freq_mag(num, den, right) {
+            low = left;
+        } else {
+            high = right;
+        }
+    }
+    freq_mag(num, den, (low + high) / 2.0)
+}
+
+fn freq_mag(num: &[f64], den: &[f64], w: f64) -> f64 {
+    let z = Complex64::new(w.cos(), -w.sin());
+    let n = horner(num, z);
+    let d = horner(den, z);
+    if d.norm() == 0.0 { f64::MAX } else { (n / d).norm() }
+}
+
+fn horner(coeffs: &[f64], z: Complex64) -> Complex64 {
+    let mut acc = Complex64::new(0.0, 0.0);
+    for coef in coeffs.iter().rev() {
+        acc = acc * z + Complex64::new(*coef, 0.0);
+    }
+    acc
+}
+
+fn impulse_l2(num: &[f64], den: &[f64]) -> f64 {
+    let order = num.len().max(den.len()) - 1;
+    let mut state = vec![0.0; order];
+    let mut energy = 0.0;
+    let mut input = 1.0;
+    for _ in 0..100_000 {
+        let y = num.first().copied().unwrap_or(0.0) * input + state.first().copied().unwrap_or(0.0);
+        if order > 0 {
+            for i in 0..order - 1 {
+                let b = num.get(i + 1).copied().unwrap_or(0.0);
+                let a = den.get(i + 1).copied().unwrap_or(0.0);
+                state[i] = state[i + 1] + b * input - a * y;
+            }
+            let b = num.get(order).copied().unwrap_or(0.0);
+            let a = den.get(order).copied().unwrap_or(0.0);
+            state[order - 1] = b * input - a * y;
+        }
+        energy += y * y;
+        input = 0.0;
+        if y.abs() < 1e-18 && state.iter().all(|s| s.abs() < 1e-18) {
+            break;
+        }
+    }
+    energy.sqrt()
+}
+
+struct Section {
+    radius: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
+}
+
+fn pair_sections(zeros: &[Complex64], poles: &[Complex64]) -> MatResult<Vec<Section>> {
+    let mut z = zeros.to_vec();
+    let mut p = poles.to_vec();
+    // Drop numerical conjugates' duplicates by keeping one of each pair and the real roots.
+    let z = unique_roots(&mut z);
+    let p = unique_roots(&mut p);
+    let mut z = z;
+    let mut p = p;
+    let mut sections = Vec::new();
+    while !p.is_empty() || !z.is_empty() {
+        if p.is_empty() {
+            let z1 = z.remove(0);
+            let (b1, b2) = if z1.im.abs() > 1e-8 {
+                (-2.0 * z1.re, z1.norm_sqr())
+            } else if let Some(index) = nearest_real(&z, z1) {
+                let z2 = z.remove(index);
+                (-(z1.re + z2.re), z1.re * z2.re)
+            } else {
+                (-z1.re, 0.0)
+            };
+            // No poles: every section sits at the origin, and the real-part tie break orders them.
+            sections.push(Section { radius: 0.0, b1, b2, a1: 0.0, a2: 0.0 });
+            continue;
+        }
+        let index = worst_pole(&p);
+        let p1 = p.remove(index);
+        if p1.im.abs() > 1e-8 {
+            let (b1, b2) = take_zeros(&mut z, p1, true);
+            sections.push(Section {
+                radius: p1.norm(),
+                b1,
+                b2,
+                a1: -2.0 * p1.re,
+                a2: p1.norm_sqr(),
+            });
+        } else if p.iter().any(|pole| pole.im.abs() <= 1e-8) {
+            let index = nearest_real(&p, p1).unwrap();
+            let p2 = p.remove(index);
+            let (b1, b2) = take_zeros(&mut z, p1, false);
+            sections.push(Section {
+                radius: p1.re.abs().min(p2.re.abs()),
+                b1,
+                b2,
+                a1: -(p1.re + p2.re),
+                a2: p1.re * p2.re,
+            });
+        } else {
+            let (b1, b2) = if let Some(index) = nearest_real(&z, p1) {
+                let z1 = z.remove(index);
+                (-z1.re, 0.0)
+            } else {
+                (0.0, 0.0)
+            };
+            sections.push(Section { radius: p1.re.abs(), b1, b2, a1: -p1.re, a2: 0.0 });
+        }
+    }
+    Ok(sections)
+}
+
+fn unique_roots(roots: &mut [Complex64]) -> Vec<Complex64> {
+    let mut kept = Vec::new();
+    let mut used = vec![false; roots.len()];
+    for i in 0..roots.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        if roots[i].im.abs() > 1e-8 {
+            if let Some(j) = (0..roots.len()).find(|j| !used[*j] && (roots[*j] - roots[i].conj()).norm() < 1e-6) {
+                used[j] = true;
+            }
+            // Keep the one with a non-negative imaginary part.
+            let root = if roots[i].im < 0.0 { roots[i].conj() } else { roots[i] };
+            kept.push(root);
+        } else {
+            kept.push(Complex64::new(roots[i].re, 0.0));
+        }
+    }
+    kept
+}
+
+fn worst_pole(poles: &[Complex64]) -> usize {
+    poles.iter().enumerate().min_by(|(_, a), (_, b)| a.norm().partial_cmp(&b.norm()).unwrap()).map(|(i, _)| i).unwrap_or(0)
+}
+
+fn nearest_real(roots: &[Complex64], target: Complex64) -> Option<usize> {
+    roots
+        .iter()
+        .enumerate()
+        .filter(|(_, root)| root.im.abs() <= 1e-8)
+        .min_by(|(_, a), (_, b)| (a.re - target.re).abs().partial_cmp(&(b.re - target.re).abs()).unwrap())
+        .map(|(i, _)| i)
+}
+
+fn take_zeros(zeros: &mut Vec<Complex64>, pole: Complex64, complex: bool) -> (f64, f64) {
+    if zeros.is_empty() {
+        return (0.0, 0.0);
+    }
+    if complex {
+        if let Some(index) = zeros.iter().enumerate().filter(|(_, z)| z.im.abs() > 1e-8).min_by(|(_, a), (_, b)| {
+            (a.norm() - pole.norm()).abs().partial_cmp(&(b.norm() - pole.norm()).abs()).unwrap()
+        }).map(|(i, _)| i) {
+            let z1 = zeros.remove(index);
+            return (-2.0 * z1.re, z1.norm_sqr());
+        }
+    }
+    let index = zeros.iter().enumerate().min_by(|(_, a), (_, b)| (*a - pole).norm().partial_cmp(&(*b - pole).norm()).unwrap()).map(|(i, _)| i).unwrap();
+    let z1 = zeros.remove(index);
+    if z1.im.abs() > 1e-8 {
+        return (-2.0 * z1.re, z1.norm_sqr());
+    }
+    if let Some(index) = nearest_real(zeros, z1) {
+        let z2 = zeros.remove(index);
+        (-(z1.re + z2.re), z1.re * z2.re)
+    } else {
+        (-z1.re, 0.0)
+    }
+}
+
+fn finish_sos(session: &mut Session, rows: &[[f64; 6]], gain: f64) -> MatResult<Value> {
+    let mut data = vec![Complex64::new(0.0, 0.0); rows.len() * 6];
+    for (row_index, row) in rows.iter().enumerate() {
+        for (col, value) in row.iter().enumerate() {
+            data[col * rows.len() + row_index] = Complex64::new(*value, 0.0);
+        }
+    }
+    let sos = Value::Matrix(Matrix { rows: rows.len(), cols: 6, data, logical: false });
+    if session.nargout >= 2 {
+        Ok(Value::Multi(vec![sos, Value::scalar(gain)]))
+    } else {
+        Ok(sos)
+    }
+}
+
+fn residuez(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 2)?;
+    if session.nargout <= 2 && args.len() >= 2 && matrix_arg(args, 0).ok().filter(|m| m.cols == 1 || m.rows == 1).is_some() && args.len() >= 3 {
+        return residuez_inverse(args);
+    }
+    // Inverse when the first argument is a residue vector and a direct term is present,
+    // or when there are three inputs.
+    if args.len() >= 3 {
+        return residuez_inverse(args);
+    }
+    let b = matrix_arg(args, 0)?.data.clone();
+    let a = matrix_arg(args, 1)?.data.clone();
+    if a.is_empty() || a[0].norm() == 0.0 {
+        return Err(MatError::new("residuez denominator must not start at zero"));
+    }
+    let (quotient, remainder) = split_negative_powers(&b, &a);
+    let poles = polynomial_roots(&a.iter().map(|z| z.re).collect::<Vec<_>>())?;
+    let mut groups: Vec<(Complex64, usize)> = Vec::new();
+    for pole in poles {
+        if let Some(group) = groups.iter_mut().find(|(p, _)| (*p - pole).norm() < 1e-8) {
+            group.1 += 1;
+        } else {
+            groups.push((pole, 1));
+        }
+    }
+    let mut residues = Vec::new();
+    let mut pole_list = Vec::new();
+    for (pole, mult) in &groups {
+        for order in 1..=*mult {
+            residues.push(residue_at(&remainder, &a, *pole, *mult, order));
+            pole_list.push(*pole);
+        }
+    }
+    let k = if quotient.is_empty() { empty_matrix() } else { row_complex(quotient) };
+    Ok(Value::Multi(vec![col_complex(residues), col_complex(pole_list), k]))
+}
+
+fn residuez_inverse(args: &[Value]) -> MatResult<Value> {
+    let residues = matrix_arg(args, 0)?.data.clone();
+    let poles = matrix_arg(args, 1)?.data.clone();
+    let direct = if args.len() >= 3 { matrix_arg(args, 2)?.data.clone() } else { Vec::new() };
+    if residues.len() != poles.len() {
+        return Err(MatError::new("residuez needs one residue per pole"));
+    }
+    let mut den = vec![Complex64::new(1.0, 0.0)];
+    let mut num = Vec::new();
+    let mut index = 0;
+    while index < poles.len() {
+        let pole = poles[index];
+        let mut mult = 1;
+        while index + mult < poles.len() && (poles[index + mult] - pole).norm() < 1e-8 {
+            mult += 1;
+        }
+        let factor = poly_pow_pole(pole, mult);
+        let mut piece = vec![Complex64::new(0.0, 0.0)];
+        for order in 1..=mult {
+            let mut term = vec![residues[index + order - 1]];
+            let rest = poly_pow_pole(pole, mult - order);
+            term = poly_mul(&term, &rest);
+            piece = poly_add(&piece, &term);
+        }
+        num = poly_add(&poly_mul(&num, &factor), &poly_mul(&piece, &den));
+        den = poly_mul(&den, &factor);
+        index += mult;
+    }
+    if !direct.is_empty() {
+        num = poly_add(&poly_mul(&direct, &den), &num);
+    }
+    let scale = den[0];
+    for coef in &mut num {
+        *coef /= scale;
+    }
+    for coef in &mut den {
+        *coef /= scale;
+    }
+    Ok(Value::Multi(vec![row_complex(num), row_complex(den)]))
+}
+
+fn residue_at(num: &[Complex64], den: &[Complex64], pole: Complex64, mult: usize, order: usize) -> Complex64 {
+    // r_order = 1/(mult-order)! * d^{mult-order}/dz of (z-p)^mult N/D at z=p.
+    // For the simple and double poles in the reference set a short finite difference is enough,
+    // and an exact formula is used when the other factor is known.
+    let deriv = mult - order;
+    let step = 1e-5;
+    let samples = 2 * deriv;
+    // Contour-free real finite difference on a small real step, which is exact for low order.
+    let mut coeffs = vec![Complex64::new(0.0, 0.0); samples + 1];
+    for (k, coef) in coeffs.iter_mut().enumerate() {
+        let z = pole + Complex64::new((k as f64 - deriv as f64) * step, 0.0);
+        *coef = cleared(num, den, pole, mult, z);
+    }
+    // Repeated differences.
+    for _ in 0..deriv {
+        for k in 0..coeffs.len() - 1 {
+            coeffs[k] = (coeffs[k + 1] - coeffs[k]) / step;
+        }
+        coeffs.pop();
+    }
+    let mut value = coeffs[deriv.min(coeffs.len() - 1)];
+    let mut fact = 1.0;
+    for i in 1..=deriv {
+        fact *= i as f64;
+    }
+    if deriv > 0 {
+        value /= fact;
+    }
+    value
+}
+
+fn cleared(num: &[Complex64], den: &[Complex64], pole: Complex64, mult: usize, z: Complex64) -> Complex64 {
+    let n = poly_eval(num, z);
+    let mut d = poly_eval(den, z);
+    let factor = z - pole;
+    // (z-p)^mult * N/D. Cancel the pole factor analytically when d is tiny.
+    if d.norm() < 1e-8 {
+        let mut stripped = den.to_vec();
+        for _ in 0..mult {
+            stripped = poly_deflate(&stripped, pole);
+        }
+        d = poly_eval(&stripped, z);
+        if d.norm() == 0.0 {
+            return Complex64::new(0.0, 0.0);
+        }
+        return n / d;
+    }
+    n / d * factor.powi(mult as i32)
+}
+
+fn poly_eval(coeffs: &[Complex64], z: Complex64) -> Complex64 {
+    let mut acc = Complex64::new(0.0, 0.0);
+    for coef in coeffs {
+        acc = acc * z + coef;
+    }
+    acc
+}
+
+/// Polynomial division for coefficients stored in ascending powers of `z^{-1}`.
+/// Returns the direct term and the strictly proper numerator in that same order.
+fn split_negative_powers(num: &[Complex64], den: &[Complex64]) -> (Vec<Complex64>, Vec<Complex64>) {
+    if num.len() < den.len() {
+        return (Vec::new(), num.to_vec());
+    }
+    let mut rev_num = num.to_vec();
+    let mut rev_den = den.to_vec();
+    rev_num.reverse();
+    rev_den.reverse();
+    let (mut quotient, mut remainder) = poly_div(&rev_num, &rev_den);
+    quotient.reverse();
+    remainder.reverse();
+    (quotient, trim_zeros(remainder))
+}
+
+fn poly_div(num: &[Complex64], den: &[Complex64]) -> (Vec<Complex64>, Vec<Complex64>) {
+    if num.len() < den.len() {
+        return (Vec::new(), num.to_vec());
+    }
+    let mut rem = num.to_vec();
+    let mut quot = vec![Complex64::new(0.0, 0.0); num.len() - den.len() + 1];
+    for i in 0..quot.len() {
+        let factor = rem[i] / den[0];
+        quot[i] = factor;
+        for (j, coef) in den.iter().enumerate() {
+            rem[i + j] -= factor * coef;
+        }
+    }
+    let rest = rem[quot.len()..].to_vec();
+    (quot, trim_zeros(rest))
+}
+
+fn poly_mul(a: &[Complex64], b: &[Complex64]) -> Vec<Complex64> {
+    if a.is_empty() || b.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![Complex64::new(0.0, 0.0); a.len() + b.len() - 1];
+    for (i, av) in a.iter().enumerate() {
+        for (j, bv) in b.iter().enumerate() {
+            out[i + j] += av * bv;
+        }
+    }
+    out
+}
+
+fn poly_add(a: &[Complex64], b: &[Complex64]) -> Vec<Complex64> {
+    let n = a.len().max(b.len());
+    let mut out = vec![Complex64::new(0.0, 0.0); n];
+    for (i, v) in a.iter().enumerate() {
+        out[n - a.len() + i] += v;
+    }
+    for (i, v) in b.iter().enumerate() {
+        out[n - b.len() + i] += v;
+    }
+    trim_zeros(out)
+}
+
+fn poly_pow_pole(pole: Complex64, power: usize) -> Vec<Complex64> {
+    let mut out = vec![Complex64::new(1.0, 0.0)];
+    let factor = vec![Complex64::new(1.0, 0.0), -pole];
+    for _ in 0..power {
+        out = poly_mul(&out, &factor);
+    }
+    out
+}
+
+fn poly_deflate(coeffs: &[Complex64], root: Complex64) -> Vec<Complex64> {
+    if coeffs.len() < 2 {
+        return vec![Complex64::new(1.0, 0.0)];
+    }
+    let mut out = vec![Complex64::new(0.0, 0.0); coeffs.len() - 1];
+    let mut acc = Complex64::new(0.0, 0.0);
+    for i in 0..out.len() {
+        acc = coeffs[i] + acc * root;
+        out[i] = acc;
+    }
+    out
+}
+
+fn trim_zeros(mut coeffs: Vec<Complex64>) -> Vec<Complex64> {
+    while coeffs.len() > 1 && coeffs.last().unwrap().norm() < 1e-12 {
+        coeffs.pop();
+    }
+    coeffs
+}
+
+fn col_complex(values: Vec<Complex64>) -> Value {
+    Value::Matrix(Matrix { rows: values.len(), cols: 1, data: values, logical: false })
+}
+
+fn row_complex(values: Vec<Complex64>) -> Value {
+    Value::Matrix(Matrix { rows: 1, cols: values.len(), data: values, logical: false })
+}
+
+fn empty_matrix() -> Value {
+    Value::Matrix(Matrix { rows: 0, cols: 0, data: Vec::new(), logical: false })
+}
+
+fn zplane(session: &mut Session, args: &[Value]) -> MatResult<Value> {
+    need(args, 1)?;
+    let first = matrix_arg(args, 0)?;
+    let (zeros, poles) = if args.len() == 1 {
+        if first.cols > 1 || (first.rows == 1 && first.cols >= 1) {
+            (Vec::new(), polynomial_roots(&first.reals()?)?)
+        } else {
+            (Vec::new(), first.data.clone())
+        }
+    } else {
+        let second = matrix_arg(args, 1)?;
+        let zeros = if is_row_poly(&first) { polynomial_roots(&first.reals()?)? } else { first.data.clone() };
+        let poles = if is_row_poly(&second) { polynomial_roots(&second.reals()?)? } else { second.data.clone() };
+        (zeros, poles)
+    };
+    if session.nargout == 0 {
+        draw_zplane(session, &zeros, &poles)?;
+    }
+    // There is no graphics-handle type. Outputs stay empty; the drawing is the no-output form.
+    if session.nargout >= 2 {
+        Ok(Value::Multi(vec![empty_matrix(), empty_matrix(), empty_matrix()]))
+    } else if session.nargout == 1 {
+        Ok(empty_matrix())
+    } else {
+        Ok(crate::util::empty())
+    }
+}
+
+fn is_row_poly(matrix: &Matrix) -> bool {
+    matrix.rows == 1 && matrix.cols > 1
+}
+
+fn draw_zplane(session: &mut Session, zeros: &[Complex64], poles: &[Complex64]) -> MatResult<()> {
+    let mut xs = Vec::new();
+    let mut ys = Vec::new();
+    for k in 0..=256 {
+        let angle = 2.0 * PI * k as f64 / 256.0;
+        xs.push(angle.cos());
+        ys.push(angle.sin());
+    }
+    plot_response(session, &xs, &ys)?;
+    let axes = session.current_figure_mut().axes_mut();
+    axes.hold = true;
+    for (points, label) in [(zeros, "zero"), (poles, "pole")] {
+        for point in points {
+            let mark = if label == "pole" { 0.04 } else { 0.03 };
+            plot_response(session, &[point.re - mark, point.re + mark], &[point.im, point.im])?;
+            plot_response(session, &[point.re, point.re], &[point.im - mark, point.im + mark])?;
+        }
+    }
+    let axes = session.current_figure_mut().axes_mut();
+    axes.title = "Pole-Zero Plot".to_string();
+    axes.hold = false;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1097,5 +1738,56 @@ mod tests {
         assert_close(&reals("r = corrcoef([1 2 3], [2 4 6]);", "r"), &[1.0; 4]);
         assert!(crate::exec("c = cov([1 2 3], [1 2]);").is_err());
         assert_close(&reals("c = xcov([1 2 3]);", "c"), &[-1.0, 0.0, 2.0, 0.0, -1.0]);
+    }
+
+    #[test]
+    fn sos_residuez_and_zplane_match_matlab() {
+        let src = "[sos, g] = tf2sos([1 4 6 4 1], [1 -1.2 0.9 -0.3 0.05]);";
+        assert_close(&reals(src, "g"), &[1.0]);
+        let sos = reals(src, "sos");
+        assert!((sos[8] + 0.508560609940842).abs() < 1e-8, "{sos:?}");
+        assert!((sos[9] + 0.691439390059159).abs() < 1e-8, "{sos:?}");
+        assert!((sos[2] - 2.00000003354362).abs() < 1e-3, "{sos:?}");
+        assert!((sos[10] - 0.115514292823272).abs() < 1e-8, "{sos:?}");
+        let src = "[sos, g] = tf2sos([1 4 6 4 1], [1 -1.2 0.9 -0.3 0.05], 'down');";
+        let sos = reals(src, "sos");
+        assert!((sos[8] + 0.691439390059159).abs() < 1e-8, "{sos:?}");
+        let src = "[sos, g] = tf2sos([1 4 6 4 1], [1 -1.2 0.9 -0.3 0.05], 'up', 'inf');";
+        assert_close(&reals(src, "g"), &[0.60695368288243]);
+        let sos = reals(src, "sos");
+        assert!((sos[0] - 0.169316477066066).abs() < 2e-4, "{sos:?}");
+        assert!((sos[1] - 9.73072558847786).abs() < 2e-3, "{sos:?}");
+        let src = "[sos, g] = tf2sos([1 4 6 4 1], [1 -1.2 0.9 -0.3 0.05], 'up', 'two');";
+        assert_close(&reals(src, "g"), &[0.884074050250963]);
+        let sos = reals(src, "sos");
+        assert!((sos[0] - 0.197148135068433).abs() < 2e-4, "{sos:?}");
+        assert!((sos[1] - 5.73744695919316).abs() < 2e-3, "{sos:?}");
+        let src = "[sos, g] = tf2sos([1 3 3 1], [1 -0.9 0.5 -0.1]);";
+        let sos = reals(src, "sos");
+        assert!((sos[8] + 0.317368523971139).abs() < 1e-6, "{sos:?}");
+        assert!((sos[4]).abs() < 1e-6, "{sos:?}");
+        let src = "[sos, g] = tf2sos([1 2 3 4 5], 1);";
+        let sos = reals(src, "sos");
+        assert_eq!(sos.len(), 12);
+        assert!((sos[2] - 2.5756309591153).abs() < 1e-6, "{sos:?}");
+        let src = "[sos, g] = tf2sos([1 0 -1], [1 -1 0.25]);";
+        assert_close(&reals(src, "sos"), &[1.0, 0.0, -1.0, 1.0, -1.0, 0.25]);
+        let src = "[z, p, k] = tf2zp([1 4 6 4 1], [1 -1.2 0.9 -0.3 0.05]); sos = zp2sos(z, p, k);";
+        let sos = reals(src, "sos");
+        assert!((sos[8] + 0.508560609940842).abs() < 1e-8, "{sos:?}");
+        let src = "[r, p, k] = residuez([1 2], [1 -0.5 -0.06]);";
+        assert_close(&reals(src, "r"), &[3.71428571428571, -2.71428571428571]);
+        assert_close(&reals(src, "p"), &[0.6, -0.1]);
+        let src = "[r, p, k] = residuez([1 2 3 4], [1 -0.5]);";
+        assert_close(&reals(src, "r"), &[49.0]);
+        assert_close(&reals(src, "k"), &[-48.0, -22.0, -8.0]);
+        let src = "[r, p, k] = residuez(1, conv([1 -0.5], [1 -0.5]));";
+        assert_close(&reals(src, "r"), &[0.0, 1.0]);
+        let src = "[b, a] = residuez([0.5 - 1.5i; 0.5 + 1.5i], [0.5 + 0.5i; 0.5 - 0.5i], []);";
+        assert_close(&reals(src, "b"), &[1.0, 1.0]);
+        assert_close(&reals(src, "a"), &[1.0, -1.0, 0.5]);
+        let session = exec("zplane([1 0.5], [1 -0.9]);").unwrap();
+        assert!(session.figures[0].axes[0].series.len() >= 2);
+        assert_eq!(session.figures[0].axes[0].title, "Pole-Zero Plot");
     }
 }

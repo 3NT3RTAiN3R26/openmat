@@ -11,7 +11,12 @@ use crate::util::{matrix_arg, need, positive, real_scalar, row};
 pub fn register(session: &mut Session) {
     for (name, func) in [
         ("fir1", fir1 as fn(&mut Session, &[Value]) -> MatResult<Value>),
+        ("fir2", crate::firdesign::fir2),
         ("firls", firls),
+        ("firpm", crate::firdesign::firpm),
+        ("firpmord", crate::firdesign::firpmord),
+        ("kaiserord", crate::firdesign::kaiserord),
+        ("firceqrip", crate::firdesign::firceqrip),
         ("sgolay", sgolay),
         ("sgolayfilt", sgolayfilt),
         ("gaussdesign", gaussdesign),
@@ -805,5 +810,73 @@ mod tests {
         assert!(crate::exec("h = rcosdesign(1.5, 8, 2);").is_err());
         assert!(crate::exec("h = rcosdesign(0.5, 3, 3);").is_err());
         assert!(crate::exec("h = rcosdesign(0.5, 8, 2, 'other');").is_err());
+    }
+
+    #[test]
+    fn fir2_firpm_and_order_estimates_match_matlab() {
+        let tol = 1e-9;
+        let h = reals("h = fir2(30, [0 0.3 0.5 1], [1 1 0 0]);", "h");
+        assert!((h[15] - 0.3984375).abs() < 1e-12);
+        assert!((h[0] - 2.6620069837086e-05).abs() < tol);
+        let h = reals("h = fir2(30, [0 0.3 0.3 0.6 0.6 1], [0 0 1 1 0 0]);", "h");
+        assert!((h[15] - 0.30078125).abs() < 1e-12);
+        assert!((h[0] + 0.00143967660705553).abs() < tol);
+        let h = reals("h = fir2(30, [0 0.5 1], [1 1 0], 64);", "h");
+        assert!((h[15] - 0.75).abs() < 1e-12);
+        assert!((h[0] - 7.53960040427218e-05).abs() < tol);
+        let h = reals("h = fir2(30, [0 0.5 1], [1 1 0], 128, 5);", "h");
+        assert!((h[0] - 7.28699664377452e-05).abs() < tol);
+        let h = reals("h = fir2(30, [0 0.5 1], [1 1 0], hann(31));", "h");
+        assert_eq!(h[0], 0.0);
+        assert!((h[15] - 0.75).abs() < 1e-12);
+        let session = exec("h = fir2(31, [0 0.5 1], [1 1 1]);").unwrap();
+        assert!(session.output.contains("Nyquist"), "{}", session.output);
+        assert_eq!(reals("h = fir2(31, [0 0.5 1], [1 1 1]);", "h").len(), 33);
+        match exec("h = fir2(30, [0 0.5 1], [1 0.5 0], 'antisymmetric');") {
+            Err(err) => assert!(err.to_string().contains("NPT in fir2 must be numeric"), "{err}"),
+            Ok(_) => panic!("antisymmetric should be rejected"),
+        }
+
+        let h = reals("[h, e] = firpm(20, [0 0.4 0.5 1], [1 1 0 0]);", "h");
+        assert!((h[0] - 0.0387762124281592).abs() < 1e-9, "{}", h[0]);
+        assert!((reals("[h, e] = firpm(20, [0 0.4 0.5 1], [1 1 0 0]);", "e")[0] - 0.0548752918958231).abs() < 1e-9);
+        let h = reals("[h, e] = firpm(20, [0 0.4 0.5 1], [1 1 0 0], [1 10]);", "h");
+        assert!((h[0] + 0.00638101515559244).abs() < 1e-9, "{}", h[0]);
+        let h = reals("[h, e] = firpm(21, [0.1 0.9], [1 1], 'hilbert');", "h");
+        assert!((h[0] + 0.0142424234763223).abs() < 1e-8, "{}", h[0]);
+        let h = reals("[h, e] = firpm(20, [0.1 0.9], [0.1 0.9], 'differentiator');", "h");
+        // The differentiator agrees with MATLAB to about 5e-4 (the Remez grid).
+        assert!((h[0] + 0.00851090793210226).abs() < 5e-4, "{}", h[0]);
+
+        assert_eq!(reals("[n, fo, ao, w] = firpmord([1500 2000], [1 0], [0.01 0.1], 8000);", "n")[0], 21.0);
+        assert_close(&reals("[n, fo, ao, w] = firpmord([1500 2000], [1 0], [0.01 0.1], 8000);", "fo"), &[0.0, 0.375, 0.5, 1.0], 1e-12);
+        assert_close(&reals("[n, fo, ao, w] = firpmord([1500 2000], [1 0], [0.01 0.1], 8000);", "w"), &[10.0, 1.0], 1e-12);
+        assert_eq!(reals("[n, fo, ao, w] = firpmord([0.3 0.4], [1 0], [0.01 0.01]);", "n")[0], 39.0);
+
+        assert_eq!(reals("[n, Wn, beta, ftype] = kaiserord([1500 2000], [1 0], [0.01 0.1], 8000);", "n")[0], 36.0);
+        assert!((reals("[n, Wn, beta, ftype] = kaiserord([1500 2000], [1 0], [0.01 0.1], 8000);", "Wn")[0] - 0.4375).abs() < 1e-12);
+        assert!((reals("[n, Wn, beta, ftype] = kaiserord([1500 2000], [1 0], [0.01 0.1], 8000);", "beta")[0] - 3.39532105226146).abs() < 1e-12);
+        let session = exec("[n, Wn, beta, ftype] = kaiserord([0.3 0.5], [0 1], [0.01 0.01]);").unwrap();
+        match session.get("ftype").unwrap() {
+            openmat_core::Value::Char(text) => assert_eq!(text, "high"),
+            other => panic!("ftype {other}"),
+        }
+        assert_eq!(reals("[n, Wn, beta, ftype] = kaiserord([0.3 0.5], [0 1], [0.01 0.01]);", "n")[0], 24.0);
+        let session = exec("[n, Wn, beta, ftype] = kaiserord([1000 1500 2000 2500], [0 1 0], [0.1 0.01 0.1], 8000);").unwrap();
+        match session.get("ftype").unwrap() {
+            openmat_core::Value::Char(text) => assert_eq!(text, "DC-0"),
+            other => panic!("ftype {other}"),
+        }
+        let session = exec("[n, Wn, beta, ftype] = kaiserord([1000 1500 2000 2500], [1 0 1], [0.01 0.1 0.01], 8000);").unwrap();
+        match session.get("ftype").unwrap() {
+            openmat_core::Value::Char(text) => assert_eq!(text, "stop"),
+            other => panic!("ftype {other}"),
+        }
+        assert_eq!(reals("[n, Wn, beta, ftype] = kaiserord([0.3 0.4], [1 0], [0.1 0.1]);", "n")[0], 17.0);
+        assert_eq!(reals("[n, Wn, beta, ftype] = kaiserord([0.3 0.4], [1 0], [0.1 0.1]);", "beta")[0], 0.0);
+
+        let h = reals("h = firceqrip(30, 0.4, [0.05 0.03]);", "h");
+        assert!((h[0] + 0.0012607273438987).abs() < 2e-3, "{}", h[0]);
+        assert!((h[15] - 0.400711516906053).abs() < 5e-3, "{}", h[15]);
     }
 }

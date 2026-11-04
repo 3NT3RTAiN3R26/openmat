@@ -337,9 +337,13 @@ fn periodogram(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let onesided = flags.onesided.unwrap_or_else(|| is_real(&x));
     let raw = welch_raw(&x, None, &p)?;
     let pxx = p.scale(&raw.sxx, flags.power, onesided);
+    let freqs = p.frequencies(onesided);
+    if session.nargout == 0 {
+        return plot_curve(session, &freqs, &pxx.iter().map(|z| 10.0 * z.re.max(1e-30).log10()).collect::<Vec<_>>());
+    }
     Ok(outputs(
         session,
-        vec![real_col(&pxx), col(p.frequencies(onesided))],
+        vec![real_col(&pxx), col(freqs)],
     ))
 }
 
@@ -358,9 +362,13 @@ fn pwelch(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let onesided = flags.onesided.unwrap_or_else(|| is_real(&x));
     let raw = welch_raw(&x, None, &p)?;
     let pxx = p.scale(&raw.sxx, flags.power, onesided);
+    let freqs = p.frequencies(onesided);
+    if session.nargout == 0 {
+        return plot_curve(session, &freqs, &pxx.iter().map(|z| 10.0 * z.re.max(1e-30).log10()).collect::<Vec<_>>());
+    }
     Ok(outputs(
         session,
-        vec![real_col(&pxx), col(p.frequencies(onesided))],
+        vec![real_col(&pxx), col(freqs)],
     ))
 }
 
@@ -394,9 +402,13 @@ fn cpsd(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let raw = welch_raw(&x, Some(&y), &p)?;
     let pxy: Vec<Complex64> = raw.syx.iter().map(|z| z.conj()).collect();
     let pxy = p.scale(&pxy, power, onesided);
+    let freqs = p.frequencies(onesided);
+    if session.nargout == 0 {
+        return plot_curve(session, &freqs, &pxy.iter().map(|z| 10.0 * z.norm().max(1e-30).log10()).collect::<Vec<_>>());
+    }
     Ok(outputs(
         session,
-        vec![complex_col(pxy), col(p.frequencies(onesided))],
+        vec![complex_col(pxy), col(freqs)],
     ))
 }
 
@@ -406,10 +418,11 @@ fn mscohere(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let cxy: Vec<f64> = (0..p.points(onesided))
         .map(|k| raw.syx[k].norm_sqr() / (raw.sxx[k].re * raw.syy[k].re))
         .collect();
-    Ok(outputs(
-        session,
-        vec![col(cxy), col(p.frequencies(onesided))],
-    ))
+    let freqs = p.frequencies(onesided);
+    if session.nargout == 0 {
+        return plot_curve(session, &freqs, &cxy);
+    }
+    Ok(outputs(session, vec![col(cxy), col(freqs)]))
 }
 
 fn tfestimate(session: &mut Session, args: &[Value]) -> MatResult<Value> {
@@ -418,10 +431,11 @@ fn tfestimate(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let txy: Vec<Complex64> = (0..p.points(onesided))
         .map(|k| raw.syx[k] / raw.sxx[k].re)
         .collect();
-    Ok(outputs(
-        session,
-        vec![complex_col(txy), col(p.frequencies(onesided))],
-    ))
+    let freqs = p.frequencies(onesided);
+    if session.nargout == 0 {
+        return plot_curve(session, &freqs, &txy.iter().map(|z| 20.0 * z.norm().max(1e-30).log10()).collect::<Vec<_>>());
+    }
+    Ok(outputs(session, vec![complex_col(txy), col(freqs)]))
 }
 
 // Spectrogram
@@ -461,15 +475,45 @@ fn spectrogram(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let times: Vec<f64> = (0..count)
         .map(|i| (i * step) as f64 / unit + p.window.len() as f64 / 2.0 / unit)
         .collect();
+    let freqs = p.frequencies(onesided);
+    if session.nargout == 0 {
+        // The figure model only stores lines, so this draws the mean magnitude
+        // across time instead of a heatmap.
+        let mut mean = vec![0.0; rows];
+        for k in 0..rows {
+            let mut acc = 0.0;
+            for i in 0..count {
+                acc += power.get(k, i).re;
+            }
+            mean[k] = 10.0 * (acc / count.max(1) as f64).max(1e-30).log10();
+        }
+        return plot_curve(session, &freqs, &mean);
+    }
     Ok(outputs(
         session,
         vec![
             Value::Matrix(s),
-            col(p.frequencies(onesided)),
+            col(freqs),
             row(times),
             Value::Matrix(power),
         ],
     ))
+}
+
+fn plot_curve(session: &mut Session, xs: &[f64], ys: &[f64]) -> MatResult<Value> {
+    use openmat_core::{Series, SeriesKind};
+    crate::plotb::prepare_plot_target(session);
+    let axes = session.current_figure_mut().axes_mut();
+    if !axes.hold {
+        axes.series.clear();
+    }
+    axes.series.push(Series {
+        xs: xs.to_vec(),
+        ys: ys.to_vec(),
+        kind: SeriesKind::Line,
+        label: String::new(),
+    });
+    Ok(crate::util::empty())
 }
 
 // Band power and window metrics
@@ -985,10 +1029,15 @@ fn pspectrum(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     let unit = fs.unwrap_or(2.0 * PI);
     let mut leakage = 0.5;
     let mut limits = (0.0, unit / 2.0);
+    let mut spectrogram_mode = false;
     let mut index = 0;
     while index < rest.len() {
         match &rest[index] {
             Value::Char(name) if name.eq_ignore_ascii_case("power") => index += 1,
+            Value::Char(name) if name.eq_ignore_ascii_case("spectrogram") => {
+                spectrogram_mode = true;
+                index += 1;
+            }
             Value::Char(name) if name.eq_ignore_ascii_case("leakage") => {
                 let value = rest
                     .get(index + 1)
@@ -1021,6 +1070,9 @@ fn pspectrum(session: &mut Session, args: &[Value]) -> MatResult<Value> {
             _ => return Err(MatError::new("unsupported pspectrum option")),
         }
     }
+    if spectrogram_mode {
+        return pspectrum_spectrogram(session, &x, unit, leakage);
+    }
     let n = x.len();
     let window = kaiser_window(n, 40.0 * (1.0 - leakage));
     let sum: f64 = window.iter().sum();
@@ -1040,7 +1092,92 @@ fn pspectrum(session: &mut Session, args: &[Value]) -> MatResult<Value> {
         freqs.push(f);
         power.push(2.0 * (re * re + im * im) / (sum * sum));
     }
+    if session.nargout == 0 {
+        return plot_curve(session, &freqs, &power.iter().map(|p| 10.0 * p.max(1e-30).log10()).collect::<Vec<_>>());
+    }
     Ok(outputs(session, vec![col(power), col(freqs)]))
+}
+
+/// Spectrogram with a 1024-point frequency grid. The segment length follows the
+/// length table in the MATLAB `pspectrum` documentation, and the overlap is
+/// `(1 - 1/(2*ENBW - 1))` of that Kaiser window.
+fn pspectrum_spectrogram(session: &mut Session, x: &[f64], fs: f64, leakage: f64) -> MatResult<Value> {
+    let n = x.len();
+    let divisor: usize = if n < 64 {
+        2
+    } else if n < 256 {
+        8
+    } else if n < 2048 {
+        8
+    } else if n < 4096 {
+        16
+    } else if n < 8192 {
+        32
+    } else if n < 16384 {
+        64
+    } else {
+        128
+    };
+    let width = (n as f64 / divisor as f64).ceil().max(1.0) as usize;
+    let window = kaiser_window(width.min(n).max(1), 40.0 * (1.0 - leakage));
+    let width = window.len();
+    let sum_w: f64 = window.iter().sum();
+    let sum_sq: f64 = window.iter().map(|w| w * w).sum();
+    let enbw = width as f64 * sum_sq / sum_w.powi(2);
+    let overlap_frac = 1.0 - 1.0 / (2.0 * enbw - 1.0);
+    let overlap = (overlap_frac * width as f64).round() as usize;
+    let hop = (width - overlap.min(width - 1)).max(1);
+    // Frames that still lie on the signal. A final frame that would start
+    // after `n - width` is not added; that is the 30-column layout for a
+    // length-1000 signal at the default resolution.
+    let mut starts = Vec::new();
+    if n <= width {
+        starts.push(0);
+    } else {
+        let mut start = 0;
+        while start + width <= n {
+            starts.push(start);
+            start += hop;
+        }
+    }
+    let rows = 1024;
+    let mut power = Matrix::zeros(rows, starts.len());
+    for (col_index, start) in starts.iter().copied().enumerate() {
+        let mut re = vec![0.0; rows];
+        let mut im = vec![0.0; rows];
+        for k in 0..rows {
+            let f = limits_freq(k, rows, fs);
+            let omega = 2.0 * PI * f / fs;
+            for i in 0..width {
+                let sample = start + i;
+                let value = if sample < n { x[sample] } else { 0.0 } * window[i];
+                let (sin, cos) = (omega * i as f64).sin_cos();
+                re[k] += value * cos;
+                im[k] -= value * sin;
+            }
+        }
+        for k in 0..rows {
+            power.set(k, col_index, Complex64::new(2.0 * (re[k] * re[k] + im[k] * im[k]) / (sum_w * sum_w), 0.0));
+        }
+    }
+    let freqs: Vec<f64> = (0..rows).map(|k| limits_freq(k, rows, fs)).collect();
+    let times: Vec<f64> = starts.iter().map(|start| (*start as f64 + (width as f64 - 1.0) / 2.0) / fs).collect();
+    if session.nargout == 0 {
+        let mut mean = vec![0.0; rows];
+        for k in 0..rows {
+            let mut acc = 0.0;
+            for c in 0..starts.len() {
+                acc += power.get(k, c).re;
+            }
+            mean[k] = 10.0 * (acc / starts.len().max(1) as f64).max(1e-30).log10();
+        }
+        return plot_curve(session, &freqs, &mean);
+    }
+    Ok(outputs(session, vec![Value::Matrix(power), col(freqs), col(times)]))
+}
+
+fn limits_freq(k: usize, rows: usize, fs: f64) -> f64 {
+    if rows == 1 { 0.0 } else { k as f64 * (fs / 2.0) / (rows - 1) as f64 }
 }
 
 #[cfg(test)]
@@ -1121,6 +1258,17 @@ mod tests {
             scalar(&src, "a")
         );
         assert!(crate::exec("c = mscohere([1 2 3 4], [1 2 3]);").is_err());
+    }
+
+    #[test]
+    fn pspectrum_spectrogram_matches_matlab_shape() {
+        let src = format!("{SINE} [p, f, t] = pspectrum(x, 1000, 'spectrogram'); a = size(p, 1); b = size(p, 2); c = numel(f); d = numel(t);");
+        assert_eq!(scalar(&src, "a"), 1024.0);
+        assert_eq!(scalar(&src, "b"), 30.0);
+        assert_eq!(scalar(&src, "c"), 1024.0);
+        assert_eq!(scalar(&src, "d"), 30.0);
+        let session = exec(&format!("{SINE} periodogram(x);")).unwrap();
+        assert!(!session.figures[0].axes[0].series.is_empty());
     }
 
     #[test]

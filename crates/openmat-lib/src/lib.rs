@@ -2,6 +2,7 @@ mod control;
 mod dsp;
 mod filt;
 mod fir;
+mod firdesign;
 mod fixed;
 mod hilb;
 mod iir;
@@ -11,6 +12,7 @@ mod plotb;
 mod resample;
 mod sigproc;
 mod spectral;
+mod ssdesign;
 mod text;
 mod util;
 
