@@ -2,6 +2,10 @@
 
 Versioning follows SemVer. Each toolbox port is a minor release, fixes are patch releases.
 
+## 0.4.1
+
+- `numel` is `prod(size(A))`. A cell counts cells, a char vector counts characters, and a string scalar (`"text"`) counts as one element. A string array counts its elements, so `numel(["a" "b" "c"; "d" "e" "f"])` is 6.
+
 ## 0.4.0
 
 - `fi` arithmetic (`+`, `-`, `.*`, `*`, `./`, comparisons) uses the stored integers in `i128`. Sums use the sum format, products and division use the product format, and a matrix product grows by `ceil(log2(K))` in full precision. The result is still clamped at 62 bits. `fixed.add` and `fixed.sub` are the same operations; `add` and `sub` stay available as script names.

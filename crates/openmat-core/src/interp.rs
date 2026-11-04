@@ -273,6 +273,11 @@ impl Session {
             Expr::Number(v) => Ok(Value::scalar(*v)),
             Expr::Imag(v) => Ok(Value::complex(0.0, *v)),
             Expr::String(s) => Ok(Value::Char(s.clone())),
+            Expr::MatlabString(s) => Ok(Value::Strings {
+                rows: 1,
+                cols: 1,
+                data: vec![s.clone()],
+            }),
             Expr::Ident(name) => {
                 if let Some(value) = self.get(name) {
                     return Ok(value.clone());
@@ -426,14 +431,26 @@ impl Session {
     }
 
     fn eval_matrix(&mut self, rows: &[Vec<Expr>]) -> MatResult<Value> {
-        let mut built: Vec<Matrix> = Vec::new();
+        let mut values: Vec<Vec<Value>> = Vec::new();
         for row in rows {
             if row.is_empty() {
                 continue;
             }
-            let mut acc: Option<Matrix> = None;
+            let mut built = Vec::new();
             for expr in row {
-                let m = self.eval(expr)?.into_matrix()?;
+                built.push(self.eval(expr)?);
+            }
+            values.push(built);
+        }
+        let string_array = values.iter().flatten().any(|value| matches!(value, Value::Strings { .. }));
+        if string_array {
+            return string_matrix(&values);
+        }
+        let mut built: Vec<Matrix> = Vec::new();
+        for row in values {
+            let mut acc: Option<Matrix> = None;
+            for value in row {
+                let m = value.into_matrix()?;
                 acc = Some(match acc {
                     None => m,
                     Some(a) => a.horzcat(&m)?,
@@ -969,4 +986,68 @@ fn write_index(matrix: &mut Matrix, specs: &[IndexSpec], rhs: &Matrix) -> MatRes
         matrix.set(*r, *c, rhs.get(rr, cc));
     }
     Ok(())
+}
+
+fn strings_of(value: &Value) -> MatResult<(usize, usize, Vec<String>)> {
+    match value {
+        Value::Strings { rows, cols, data } => Ok((*rows, *cols, data.clone())),
+        other => Err(MatError::new(format!(
+            "string arrays cannot contain {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn string_matrix(rows: &[Vec<Value>]) -> MatResult<Value> {
+    let mut built: Vec<(usize, usize, Vec<String>)> = Vec::new();
+    for row in rows {
+        let mut acc: Option<(usize, usize, Vec<String>)> = None;
+        for value in row {
+            let next = strings_of(value)?;
+            acc = Some(match acc {
+                None => next,
+                Some((rows, cols, mut data)) => {
+                    if rows != next.0 {
+                        return Err(MatError::new(
+                            "horizontal concatenation needs the same number of rows",
+                        ));
+                    }
+                    let mut row_major = vec![String::new(); rows * (cols + next.1)];
+                    for r in 0..rows {
+                        for c in 0..cols {
+                            row_major[r * (cols + next.1) + c] = data[r * cols + c].clone();
+                        }
+                        for c in 0..next.1 {
+                            row_major[r * (cols + next.1) + cols + c] = next.2[r * next.1 + c].clone();
+                        }
+                    }
+                    data = row_major;
+                    (rows, cols + next.1, data)
+                }
+            });
+        }
+        if let Some(row) = acc {
+            built.push(row);
+        }
+    }
+    if built.is_empty() {
+        return Ok(Value::Strings {
+            rows: 0,
+            cols: 0,
+            data: Vec::new(),
+        });
+    }
+    let cols = built[0].1;
+    if built.iter().any(|row| row.1 != cols) {
+        return Err(MatError::new("vertical concatenation needs the same number of columns"));
+    }
+    let mut data = Vec::new();
+    for row in &built {
+        data.extend(row.2.iter().cloned());
+    }
+    Ok(Value::Strings {
+        rows: built.iter().map(|row| row.0).sum(),
+        cols,
+        data,
+    })
 }

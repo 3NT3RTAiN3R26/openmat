@@ -181,6 +181,11 @@ mod tests {
         assert!((scalar("[1-2]") - -1.0).abs() < 1e-9);
         assert!((scalar("a = [1 2 3]; a(end)") - 3.0).abs() < 1e-9);
         assert!((scalar("s = 0; for i = 1:5, s = s + i; end; s") - 15.0).abs() < 1e-9);
+        assert!((scalar("mods = {'apsk16','qam16','apsk64','qam64'}; numel(mods)") - 4.0).abs() < 1e-9);
+        assert!((scalar("mods = {'apsk16','qam16'}; size(mods, 2)") - 2.0).abs() < 1e-9);
+        assert!((scalar("numel('mytext')") - 6.0).abs() < 1e-9);
+        assert!((scalar("numel(\"mytext\")") - 1.0).abs() < 1e-9);
+        assert!((scalar("numel([\"a\" \"b\" \"c\"; \"d\" \"e\" \"f\"])") - 6.0).abs() < 1e-9);
     }
 
     #[test]

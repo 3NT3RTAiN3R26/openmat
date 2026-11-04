@@ -239,6 +239,7 @@ fn push_series(session: &mut Session, xs: Vec<f64>, ys: Vec<f64>, kind: SeriesKi
     });
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn step_final(num: &[f64], den: &[f64]) -> MatResult<f64> {
     let (a, b, c, d) = tf_to_ss(num, den)?;
     let mut state = vec![0.0; a.rows];

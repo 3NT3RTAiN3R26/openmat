@@ -72,41 +72,60 @@ fn eye(_: &mut Session, args: &[Value]) -> MatResult<Value> {
     Ok(Value::Matrix(m))
 }
 
+fn extent(value: &Value) -> MatResult<(usize, usize)> {
+    match value {
+        Value::Matrix(m) => Ok((m.rows, m.cols)),
+        Value::Cell { rows, cols, .. } => Ok((*rows, *cols)),
+        Value::Char(text) => Ok((1, text.chars().count())),
+        Value::Strings { rows, cols, .. } => Ok((*rows, *cols)),
+        Value::Fi(fi) => Ok((fi.rows, fi.cols)),
+        Value::Struct(_) => Ok((1, 1)),
+        other => Err(MatError::new(format!(
+            "expected an array, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
 fn size(session: &mut Session, args: &[Value]) -> MatResult<Value> {
     need(args, 1)?;
-    let m = matrix_arg(args, 0)?;
+    let (rows, cols) = extent(&args[0])?;
     if args.len() >= 2 {
         let dim = positive(real_scalar(args, 1)?)?;
-        let n = if dim == 1 { m.rows } else { m.cols };
+        let n = if dim == 1 { rows } else { cols };
         return Ok(Value::scalar(n as f64));
     }
     if session.nargout >= 2 {
         return Ok(Value::Multi(vec![
-            Value::scalar(m.rows as f64),
-            Value::scalar(m.cols as f64),
+            Value::scalar(rows as f64),
+            Value::scalar(cols as f64),
         ]));
     }
-    Ok(row(vec![m.rows as f64, m.cols as f64]))
+    Ok(row(vec![rows as f64, cols as f64]))
 }
 
 fn length(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    let m = matrix_arg(args, 0)?;
-    Ok(Value::scalar(m.rows.max(m.cols) as f64))
+    need(args, 1)?;
+    let (rows, cols) = extent(&args[0])?;
+    Ok(Value::scalar(rows.max(cols) as f64))
 }
 
 fn numel(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    let m = matrix_arg(args, 0)?;
-    Ok(Value::scalar(m.numel() as f64))
+    need(args, 1)?;
+    let (rows, cols) = extent(&args[0])?;
+    Ok(Value::scalar((rows * cols) as f64))
 }
 
 fn ndims(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    let _ = matrix_arg(args, 0)?;
+    need(args, 1)?;
+    let _ = extent(&args[0])?;
     Ok(Value::scalar(2.0))
 }
 
 fn isempty(_: &mut Session, args: &[Value]) -> MatResult<Value> {
-    let m = matrix_arg(args, 0)?;
-    Ok(Value::logical(m.numel() == 0))
+    need(args, 1)?;
+    let (rows, cols) = extent(&args[0])?;
+    Ok(Value::logical(rows * cols == 0))
 }
 
 fn diag(_: &mut Session, args: &[Value]) -> MatResult<Value> {

@@ -690,6 +690,12 @@ pub enum FuncHandle {
 pub enum Value {
     Matrix(Matrix),
     Char(String),
+    /// MATLAB string array. A scalar `"text"` has one element, unlike a char vector.
+    Strings {
+        rows: usize,
+        cols: usize,
+        data: Vec<String>,
+    },
     Cell {
         rows: usize,
         cols: usize,
@@ -897,6 +903,7 @@ impl Value {
             Value::Matrix(m) if m.logical => "logical",
             Value::Matrix(_) => "double",
             Value::Char(_) => "char",
+            Value::Strings { .. } => "string",
             Value::Cell { .. } => "cell",
             Value::Struct(_) => "struct",
             Value::Func(_) => "function_handle",
@@ -913,6 +920,7 @@ impl Value {
             Value::Matrix(m) if !m.is_real() => format!("{}x{} complex", m.rows, m.cols),
             Value::Matrix(m) => format!("{}x{} double", m.rows, m.cols),
             Value::Char(s) => format!("1x{} char", s.chars().count()),
+            Value::Strings { rows, cols, .. } => format!("{rows}x{cols} string"),
             Value::Cell { rows, cols, .. } => format!("{rows}x{cols} cell"),
             Value::Struct(map) => format!("struct with {} fields", map.len()),
             Value::Func(_) => "function_handle".to_string(),
@@ -958,6 +966,9 @@ impl fmt::Display for Value {
         match self {
             Value::Matrix(m) => write!(f, "{}", format_matrix(m)),
             Value::Char(s) => write!(f, "'{s}'"),
+            Value::Strings { data, .. } => {
+                write!(f, "\"{}\"", data.join("\" \""))
+            }
             Value::Cell { rows, cols, data } => {
                 write!(f, "{rows}x{cols} cell")?;
                 for (i, v) in data.iter().enumerate() {

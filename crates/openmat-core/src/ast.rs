@@ -36,6 +36,8 @@ pub enum Expr {
     Number(f64),
     Imag(f64),
     String(String),
+    /// One element of a MATLAB string array (`"text"`).
+    MatlabString(String),
     Ident(String),
     End,
     Colon,

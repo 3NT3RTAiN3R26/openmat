@@ -645,6 +645,7 @@ fn size_text(value: &Value) -> String {
     match value {
         Value::Matrix(matrix) => format!("{}x{}", matrix.rows, matrix.cols),
         Value::Char(text) => format!("1x{}", text.chars().count()),
+        Value::Strings { rows, cols, .. } => format!("{rows}x{cols}"),
         Value::Cell { rows, cols, .. } => format!("{rows}x{cols}"),
         Value::Fi(fi) => format!("{}x{}", fi.rows, fi.cols),
         Value::Struct(_) | Value::System(_) | Value::Func(_) => "1x1".into(),

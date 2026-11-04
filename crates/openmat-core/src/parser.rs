@@ -115,7 +115,10 @@ impl Parser {
         };
         if !matches!(
             next.kind,
-            TokenKind::Ident(_) | TokenKind::String(_) | TokenKind::Number(_)
+            TokenKind::Ident(_)
+                | TokenKind::String(_)
+                | TokenKind::MatlabString(_)
+                | TokenKind::Number(_)
         ) {
             return Ok(None);
         }
@@ -125,6 +128,10 @@ impl Parser {
             match self.current().kind.clone() {
                 TokenKind::Ident(text) | TokenKind::String(text) => {
                     args.push(Expr::String(text));
+                    self.bump();
+                }
+                TokenKind::MatlabString(text) => {
+                    args.push(Expr::MatlabString(text));
                     self.bump();
                 }
                 TokenKind::Number(value) => {
@@ -488,6 +495,10 @@ impl Parser {
             TokenKind::String(s) => {
                 self.bump();
                 Ok(Expr::String(s))
+            }
+            TokenKind::MatlabString(s) => {
+                self.bump();
+                Ok(Expr::MatlabString(s))
             }
             TokenKind::Ident(name) => {
                 self.bump();
